@@ -4,7 +4,7 @@ Cue is an AI teammate for software teams, being developed for the Bolna AI Build
 
 The product concept is an agent with its own team identity that can answer questions about work, participate in meetings when addressed, track decisions and action items, and carry out approved actions across tools. The first planned integrations are Google Workspace, Slack, GitHub, meetings, and a project tracker.
 
-This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), and a [license decision guide](docs/licensing.md).
+This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), and a [license decision guide](docs/licensing.md).
 
 ## Planned system areas
 
@@ -31,6 +31,7 @@ python3.12 -m venv .venv
 cp .env.example .env
 set -a; . ./.env; set +a
 .venv/bin/python scripts/migrate.py
+.venv/bin/python scripts/ensure_partitions.py
 .venv/bin/pytest -q
 .venv/bin/uvicorn cue.main:app --reload
 ```
@@ -41,4 +42,8 @@ For Cloud Run, put database credentials in Secret Manager and connect to Cloud S
 
 ## Phase 2 connectors
 
-The connector contract defines authorization, backfill, subscription checks, normalization, ACL mapping, and tools. The first implementation is a GitHub App connector. It sends signed webhook deliveries and resumable issue/PR snapshots to the Pub/Sub raw-events topic. See [setup and current limits](docs/phase2-connectors.md). Processing those raw events into the five memory stores is Phase 3 onward.
+The connector contract defines authorization, backfill, subscription checks, normalization, ACL mapping, and tools. The first implementation is a GitHub App connector. It sends signed webhook deliveries and resumable issue/PR snapshots to the Pub/Sub raw-events topic. See [setup and current limits](docs/phase2-connectors.md).
+
+## Phase 3 event pipeline
+
+The ingest worker stores raw GitHub events in GCS, resolves source identities, and writes canonical events to a tenant-isolated, monthly Postgres log. The outbox worker publishes committed events for later memory-store fan-out. See [pipeline setup and replay](docs/phase3-ingestion.md).

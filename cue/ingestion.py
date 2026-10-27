@@ -1,0 +1,150 @@
+"""Raw Pub/Sub delivery -> immutable GCS payload and canonical Postgres event."""
+
+import hashlib
+import json
+import os
+from dataclasses import replace
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
+
+import psycopg
+from google.api_core.exceptions import PreconditionFailed
+from google.cloud import storage
+from psycopg.types.json import Jsonb
+
+from cue.connectors.base import AccessControl, CanonicalEvent
+from cue.connectors.github import GitHubConnector
+
+
+def _routing(database: psycopg.Connection, raw: dict, attributes: dict) -> tuple[UUID, UUID]:
+    if attributes.get("source") != "github":
+        raise ValueError("Unsupported raw event source")
+    if "connection_id" in attributes:
+        connection_id = UUID(attributes["connection_id"])
+        row = database.execute(
+            "SELECT tenant_id, connection_id FROM github_installation_map WHERE connection_id = %s",
+            (connection_id,),
+        ).fetchone()
+        if row is None or str(row[0]) != attributes.get("tenant_id"):
+            raise ValueError("Backfill connection does not match tenant")
+    else:
+        installation_id = raw.get("installation", {}).get("id")
+        if not isinstance(installation_id, int) or str(installation_id) != attributes.get("installation_id"):
+            raise ValueError("Webhook installation does not match delivery")
+        row = database.execute(
+            "SELECT tenant_id, connection_id FROM github_installation_map WHERE installation_id = %s",
+            (installation_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("GitHub installation is not linked to a tenant")
+    return row[0], row[1]
+
+
+def _canonical(raw: dict, attributes: dict, tenant_id: UUID) -> CanonicalEvent:
+    if "connection_id" in attributes:
+        event = GitHubConnector().normalize(raw, tenant_id)
+        if event.event_id != attributes.get("event_id"):
+            raise ValueError("Backfill event ID does not match payload")
+        return event
+    delivery_id = attributes.get("delivery_id")
+    if not delivery_id:
+        raise ValueError("Webhook delivery ID is required")
+    if attributes.get("event") == "installation":
+        return CanonicalEvent(
+            tenant_id=tenant_id,
+            event_id=f"gh:delivery:{delivery_id}",
+            source="github",
+            type=f"installation.{raw.get('action', 'unknown')}",
+            occurred_at=datetime.now(timezone.utc),
+            actors=(),
+            objects=(f"github:installation:{raw['installation']['id']}",),
+            text="",
+            acl=AccessControl("restricted", ("cue:admins",)),
+        )
+    if attributes.get("event") not in {"issues", "pull_request"}:
+        raise ValueError("Unsupported GitHub webhook event")
+    return replace(
+        GitHubConnector().normalize(raw, tenant_id),
+        event_id=f"gh:delivery:{delivery_id}",
+    )
+
+
+def _resolve(database: psycopg.Connection, tenant_id: UUID, alias: str) -> str:
+    kind = alias.split(":", 2)[1]
+    kind = "person" if kind == "user" else kind
+    database.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"{tenant_id}:{alias}",),
+    )
+    row = database.execute(
+        "SELECT entity_id FROM entity_aliases WHERE tenant_id = %s AND alias = %s",
+        (tenant_id, alias),
+    ).fetchone()
+    if row:
+        return f"{kind}:{row[0]}"
+    entity_id = uuid4()
+    database.execute(
+        "INSERT INTO entities (tenant_id, id, kind) VALUES (%s, %s, %s)",
+        (tenant_id, entity_id, kind),
+    )
+    database.execute(
+        "INSERT INTO entity_aliases (tenant_id, alias, entity_id) VALUES (%s, %s, %s)",
+        (tenant_id, alias, entity_id),
+    )
+    return f"{kind}:{entity_id}"
+
+
+def process_raw(data: bytes, attributes: dict, database_url: str, storage_client=None) -> bool:
+    """Return True for a new event, False for an already committed delivery."""
+    raw = json.loads(data)
+    if not isinstance(raw, dict):
+        raise ValueError("Raw payload must be a JSON object")
+    with psycopg.connect(database_url, autocommit=True) as database:
+        tenant_id, _ = _routing(database, raw, attributes)
+        event = _canonical(raw, attributes, tenant_id)
+        bucket = os.environ["RAW_GCS_BUCKET"]
+        key = f"raw/{tenant_id}/github/{hashlib.sha256(data).hexdigest()}.json"
+        client = storage_client or storage.Client()
+        try:
+            client.bucket(bucket).blob(key).upload_from_string(
+                data, content_type="application/json", if_generation_match=0
+            )
+        except PreconditionFailed:
+            pass  # A retry already stored these exact bytes at the content-addressed key.
+        raw_ref = f"gs://{bucket}/{key}"
+        with database.transaction():
+            database.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
+            inserted = database.execute(
+                "INSERT INTO event_dedupe (tenant_id, event_id) VALUES (%s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (tenant_id, event.event_id),
+            ).rowcount
+            if not inserted:
+                return False
+            actors = [_resolve(database, tenant_id, alias) for alias in event.actors]
+            objects = [_resolve(database, tenant_id, alias) for alias in event.objects]
+            payload = {
+                "tenant_id": str(tenant_id),
+                "event_id": event.event_id,
+                "source": event.source,
+                "type": event.type,
+                "occurred_at": event.occurred_at.isoformat(),
+                "actors": actors,
+                "objects": objects,
+                "text": event.text,
+                "acl": {
+                    "visibility": event.acl.visibility,
+                    "principals": list(event.acl.principals),
+                },
+                "raw_ref": raw_ref,
+            }
+            database.execute(
+                "INSERT INTO event_log (tenant_id, event_id, occurred_at, source, type, payload) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (tenant_id, event.event_id, event.occurred_at, event.source, event.type, Jsonb(payload)),
+            )
+            database.execute(
+                "INSERT INTO event_outbox (tenant_id, event_id, payload) VALUES (%s, %s, %s)",
+                (tenant_id, event.event_id, Jsonb(payload)),
+            )
+            return True

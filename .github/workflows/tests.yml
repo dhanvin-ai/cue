@@ -22,7 +22,9 @@ jobs:
     env:
       MIGRATION_DATABASE_URL: postgresql://cue_admin:cue_local_admin@localhost:5432/cue
       DATABASE_URL: postgresql://cue_app:cue_local_app@localhost:5432/cue
+      INGEST_DATABASE_URL: postgresql://cue_ingest:cue_local_ingest@localhost:5432/cue
       CUE_APP_DB_PASSWORD: cue_local_app
+      CUE_INGEST_DB_PASSWORD: cue_local_ingest
       FIREBASE_PROJECT_ID: cue-test
     steps:
       - uses: actions/checkout@v4
@@ -32,4 +34,6 @@ jobs:
       - run: pip install '.[test]'
       - run: python scripts/migrate.py
       - run: python scripts/migrate.py
+      - run: python scripts/ensure_partitions.py
+      - run: python scripts/ensure_partitions.py
       - run: pytest -q

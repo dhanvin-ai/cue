@@ -112,13 +112,18 @@ class GitHubConnector:
         kind = "pr" if "pull_request" in raw or "pull_request" in item else "issue"
         updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
         repository = raw["repository"]
+        action = raw.get("action", "snapshot")
+        if kind == "pr" and action == "closed" and item.get("merged"):
+            action = "merged"
+            if item.get("merged_at"):
+                updated = datetime.fromisoformat(item["merged_at"].replace("Z", "+00:00"))
         return CanonicalEvent(
             tenant_id=tenant_id,
             event_id=f"gh:{kind}:{item['id']}:{item['updated_at']}:{raw.get('action', 'snapshot')}",
             source="github",
-            type=f"{kind}.{raw.get('action', 'snapshot')}",
+            type=f"{kind}.{action}",
             occurred_at=updated,
-            actors=(f"github:user:{item['user']['id']}",),
+            actors=(f"github:user:{(raw.get('sender') or item['user'])['id']}",),
             objects=(f"github:{kind}:{item['id']}", f"github:repo:{repository['id']}"),
             text=f"{item['title']}\n{item.get('body') or ''}",
             acl=self.acl(raw),

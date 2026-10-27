@@ -50,7 +50,7 @@ def healthz() -> dict[str, str]:
 @app.post("/webhooks/github", status_code=202)
 async def github_webhook(request: Request) -> dict[str, bool]:
     body = await request.body()
-    # shortcut: Pub/Sub has a 10 MB message limit; move larger payloads through GCS in Phase 3.
+    # Keep below Pub/Sub's message limit; raw payloads are archived by the ingest worker.
     if len(body) > 9_000_000:
         raise HTTPException(status_code=413, detail="Webhook payload too large")
     key = await run_in_threadpool(secret, os.environ["GITHUB_WEBHOOK_SECRET_VERSION"])

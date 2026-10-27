@@ -22,13 +22,19 @@ def main() -> None:
             cursor.execute("SELECT 1 FROM tenants WHERE id = %s", (args.tenant_id,))
             if cursor.fetchone() is None:
                 raise ValueError("Tenant not found")
+            connection_id = uuid4()
             cursor.execute(
                 "INSERT INTO connector_connections (id, tenant_id, provider, external_id) "
                 "VALUES (%s, %s, 'github', %s) ON CONFLICT (provider, external_id) DO NOTHING",
-                (uuid4(), args.tenant_id, str(args.installation_id)),
+                (connection_id, args.tenant_id, str(args.installation_id)),
             )
             if cursor.rowcount != 1:
                 raise ValueError("Installation already linked to a tenant")
+            cursor.execute(
+                "INSERT INTO github_installation_map (installation_id, tenant_id, connection_id) "
+                "VALUES (%s, %s, %s)",
+                (args.installation_id, args.tenant_id, connection_id),
+            )
 
 
 if __name__ == "__main__":
