@@ -31,4 +31,5 @@ jobs:
           python-version: '3.12'
       - run: pip install '.[test]'
       - run: python scripts/migrate.py
+      - run: python scripts/migrate.py
       - run: pytest -q

@@ -1,10 +1,12 @@
 import os
+import json
 from uuid import UUID
 
 import firebase_admin
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.concurrency import run_in_threadpool
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
 from opentelemetry import trace
@@ -13,6 +15,9 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from google.cloud import pubsub_v1
+
+from cue.connectors.github import REQUIRED_EVENTS, secret, verify_webhook
 
 app = FastAPI(title="Cue API")
 bearer = HTTPBearer(auto_error=False)
@@ -40,6 +45,46 @@ def firebase_uid(credentials: HTTPAuthorizationCredentials | None = Depends(bear
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/webhooks/github", status_code=202)
+async def github_webhook(request: Request) -> dict[str, bool]:
+    body = await request.body()
+    # shortcut: Pub/Sub has a 10 MB message limit; move larger payloads through GCS in Phase 3.
+    if len(body) > 9_000_000:
+        raise HTTPException(status_code=413, detail="Webhook payload too large")
+    key = await run_in_threadpool(secret, os.environ["GITHUB_WEBHOOK_SECRET_VERSION"])
+    if not verify_webhook(
+        body,
+        request.headers.get("X-Hub-Signature-256"),
+        key,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+    event = request.headers.get("X-GitHub-Event")
+    if event not in REQUIRED_EVENTS:
+        return {"accepted": False}
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    if not delivery_id:
+        raise HTTPException(status_code=400, detail="Missing GitHub delivery ID")
+    try:
+        payload = json.loads(body)
+        installation_id = int(payload["installation"]["id"])
+        if installation_id <= 0:
+            raise ValueError("Invalid installation ID")
+    except (ValueError, TypeError, KeyError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid GitHub payload") from exc
+    def publish() -> None:
+        pubsub_v1.PublisherClient().publish(
+            os.environ["RAW_EVENTS_TOPIC"],
+            body,
+            source="github",
+            event=event,
+            delivery_id=delivery_id,
+            installation_id=str(installation_id),
+        ).result(timeout=5)
+
+    await run_in_threadpool(publish)
+    return {"accepted": True}
 
 
 @app.get("/v1/tenants/{tenant_id}/me")

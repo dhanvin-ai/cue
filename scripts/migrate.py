@@ -20,10 +20,12 @@ def main() -> None:
             cursor.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY)"
             )
-            cursor.execute("SELECT 1 FROM schema_migrations WHERE version = 1")
-            if cursor.fetchone() is None:
-                cursor.execute((root / "migrations/001_foundation.sql").read_text())
-                cursor.execute("INSERT INTO schema_migrations (version) VALUES (1)")
+            for path in sorted((root / "migrations").glob("*.sql")):
+                version = int(path.name.split("_", 1)[0])
+                cursor.execute("SELECT 1 FROM schema_migrations WHERE version = %s", (version,))
+                if cursor.fetchone() is None:
+                    cursor.execute(path.read_text())
+                    cursor.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (version,))
 
 
 if __name__ == "__main__":
