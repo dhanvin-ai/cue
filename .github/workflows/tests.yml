@@ -1,0 +1,34 @@
+name: Backend tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cue
+          POSTGRES_USER: cue_admin
+          POSTGRES_PASSWORD: cue_local_admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cue_admin -d cue"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MIGRATION_DATABASE_URL: postgresql://cue_admin:cue_local_admin@localhost:5432/cue
+      DATABASE_URL: postgresql://cue_app:cue_local_app@localhost:5432/cue
+      CUE_APP_DB_PASSWORD: cue_local_app
+      FIREBASE_PROJECT_ID: cue-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install '.[test]'
+      - run: python scripts/migrate.py
+      - run: pytest -q
