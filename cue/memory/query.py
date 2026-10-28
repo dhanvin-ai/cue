@@ -10,6 +10,7 @@ import psycopg
 from cue.connectors.factory import make_connector
 from cue.memory.model import QueryPlan, SmallModel
 from cue.memory.vector import QdrantIndex, QwenEmbedder
+from cue.runtime import store
 
 ALLOWED = "(visibility = 'public' OR principals && %s::text[])"
 DOCUMENT = "event_id, source, type, text, raw_ref, source_url, occurred_at, objects"
@@ -30,7 +31,8 @@ def _principals(database: psycopg.Connection, tenant_id: UUID, requester: str,
     effective = None
     for uid in members:
         row = database.execute(
-            "SELECT role FROM users WHERE tenant_id = %s AND firebase_uid = %s",
+            "SELECT role FROM users WHERE tenant_id = %s AND firebase_uid = %s "
+            "AND revoked_at IS NULL",
             (tenant_id, uid),
         ).fetchone()
         if row is None:
@@ -213,12 +215,22 @@ def query_memory(tenant_id: UUID, requester: str, question: str, participants: l
     with psycopg.connect(database_url) as database:
         database.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
         principals = _principals(database, tenant_id, requester, participants)
+
+        def accessed(result: dict, citations: int) -> dict:
+            store.audit(database, tenant_id, actor=requester, action="access",
+                        decision="allowed", detail={"route": plan.route,
+                                                    "question": question[:500],
+                                                    "citations": citations})
+            return result
+
         if plan.route == "status":
-            return {"route": "status", **_live_status(database, tenant_id, principals, target)}
+            return accessed({"route": "status", **_live_status(
+                database, tenant_id, principals, target)}, 1)
         if plan.route == "count":
             number, rows = _count(database, plan, principals)
-            return {"route": "count", "answer": str(number),
-                    "citations": [_citation(row, index + 1) for index, row in enumerate(rows)]}
+            citations = [_citation(row, index + 1) for index, row in enumerate(rows)]
+            return accessed({"route": "count", "answer": str(number), "citations": citations},
+                            len(citations))
         if plan.route == "period":
             summaries = _period(database, plan, principals)
             evidence = [{"number": index + 1, "text": item["text"],
@@ -235,5 +247,6 @@ def query_memory(tenant_id: UUID, requester: str, question: str, participants: l
             evidence = [{"number": item["number"], "text": item["text"],
                          "source": item["source"], "occurred_at": item["occurred_at"]}
                         for item in citations]
-    answer = model.answer(question, evidence) if evidence else "No accessible evidence found."
-    return {"route": plan.route, "answer": answer, "citations": citations}
+        answer = model.answer(question, evidence) if evidence else "No accessible evidence found."
+        return accessed({"route": plan.route, "answer": answer, "citations": citations},
+                        len(citations))

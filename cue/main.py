@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import hmac
+from datetime import datetime, time
 from urllib.parse import parse_qs
 from uuid import UUID
 
@@ -23,9 +24,14 @@ from pydantic import BaseModel, Field
 
 from cue.connectors.github import REQUIRED_EVENTS, secret, verify_webhook
 from cue.connectors import signatures
+from cue.audit import report as audit_report
+from cue.controls import switches
+from cue.lifecycle import propagation
 from cue.meetings import notes as meeting_notes
 from cue.meetings import service as meeting_service
 from cue.memory.query import query_memory
+from cue.ops import status as ops_status
+from cue.proactive import quiet, rules as proactive_rules
 from cue.runtime import ingress as agent_ingress
 from cue.runtime import service as agent_service
 from cue.runtime import store as agent_store
@@ -58,6 +64,19 @@ def firebase_uid(credentials: HTTPAuthorizationCredentials | None = Depends(bear
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz() -> dict:
+    checks = {}
+    try:
+        with psycopg.connect(os.environ["DATABASE_URL"]) as database:
+            database.execute("SELECT 1")
+        checks["postgres"] = "ok"
+    except Exception as exc:  # noqa: BLE001 - readiness reports the check, not a stack trace
+        checks["postgres"] = type(exc).__name__
+    status = "ok" if all(value == "ok" for value in checks.values()) else "degraded"
+    return {"status": status, "checks": checks}
 
 
 @app.post("/webhooks/github", status_code=202)
@@ -188,7 +207,8 @@ def me(tenant_id: UUID, uid: str = Depends(firebase_uid)) -> dict[str, str]:
         with connection.cursor() as cursor:
             cursor.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
             cursor.execute(
-                "SELECT role FROM users WHERE tenant_id = %s AND firebase_uid = %s",
+                "SELECT role FROM users WHERE tenant_id = %s AND firebase_uid = %s "
+                "AND revoked_at IS NULL",
                 (tenant_id, uid),
             )
             row = cursor.fetchone()
@@ -388,3 +408,199 @@ async def meeting_end(tenant_id: UUID, meeting_id: UUID,
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def require_admin(tenant_id: UUID, uid: str) -> None:
+    with agent_store.tenant_connection(tenant_id) as database:
+        if agent_store.membership(database, tenant_id, uid) != "admin":
+            raise HTTPException(status_code=403, detail="Admin role required")
+
+
+def replay_ingest(data: bytes, attributes: dict) -> bool:
+    from cue.ingestion import process_raw
+    return process_raw(data, attributes, os.environ["INGEST_DATABASE_URL"])
+
+
+class KillSwitchBody(BaseModel):
+    paused: bool = True
+    mode: str = Field(default="queue", pattern="^(queue|drop)$")
+    reason: str | None = None
+
+
+class RevocationBody(BaseModel):
+    kind: str = Field(pattern="^(user|connector)$")
+    subject: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class QuietHoursBody(BaseModel):
+    scope: str = Field(pattern="^(tenant|user)$")
+    subject: str = "*"
+    timezone: str = Field(min_length=1, max_length=80)
+    start: time
+    end: time
+
+
+class ProactiveRuleBody(BaseModel):
+    rule_key: str = Field(min_length=1, max_length=80)
+    kind: str = Field(pattern="^(daily_digest|weekly_digest|reminder|stale_pr|overdue_action)$")
+    owner_uid: str | None = None
+    schedule: str | None = None
+    timezone: str = "UTC"
+    config: dict = Field(default_factory=dict)
+    next_run_at: datetime | None = None
+
+
+class MuteBody(BaseModel):
+    rule_key: str = Field(default="*", max_length=80)
+    uid: str | None = None
+
+
+@app.get("/v1/tenants/{tenant_id}/status")
+def tenant_status(tenant_id: UUID, uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        return ops_status.tenant_status(tenant_id, uid)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/v1/tenants/{tenant_id}/admin/access-report")
+def admin_access_report(tenant_id: UUID, uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        return audit_report.access_report(
+            tenant_id, uid, tools=list(audit_report.AGENT_TOOLS),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/v1/tenants/{tenant_id}/admin/audit/export")
+def admin_audit_export(tenant_id: UUID, since: datetime, until: datetime,
+                       format: str = "json", uid: str = Depends(firebase_uid)):
+    try:
+        result = audit_report.export_audit(tenant_id, uid, since, until, fmt=format)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(result, str):
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(result, media_type="text/csv")
+    return result
+
+
+@app.put("/v1/tenants/{tenant_id}/admin/kill-switches/{scope}/{subject}")
+def admin_kill_switch(tenant_id: UUID, scope: str, subject: str, body: KillSwitchBody,
+                      uid: str = Depends(firebase_uid)) -> dict:
+    require_admin(tenant_id, uid)
+    try:
+        with agent_store.tenant_connection(tenant_id) as database:
+            if not body.paused:
+                return switches.resume(
+                    database, tenant_id, scope=scope, subject=subject, actor=uid,
+                    ingest=replay_ingest,
+                )
+            return switches.set_switch(
+                database, tenant_id, scope=scope, subject=subject, paused=body.paused,
+                actor=uid, mode=body.mode, reason=body.reason,
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/tenants/{tenant_id}/admin/kill-switches")
+def admin_kill_switches(tenant_id: UUID, uid: str = Depends(firebase_uid)) -> dict:
+    require_admin(tenant_id, uid)
+    with agent_store.tenant_connection(tenant_id) as database:
+        return switches.status(database, tenant_id)
+
+
+@app.post("/v1/tenants/{tenant_id}/admin/revocations")
+def admin_revocation(tenant_id: UUID, body: RevocationBody,
+                     uid: str = Depends(firebase_uid)) -> dict:
+    require_admin(tenant_id, uid)
+    try:
+        with agent_store.tenant_connection(tenant_id) as database:
+            if body.kind == "user":
+                return propagation.revoke_user(
+                    database, tenant_id, body.subject, requested_by=uid, reason=body.reason,
+                )
+            return propagation.revoke_connector(
+                database, tenant_id, UUID(body.subject), requested_by=uid, reason=body.reason,
+            )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/v1/tenants/{tenant_id}/admin/events/{event_id:path}")
+def admin_delete_event(tenant_id: UUID, event_id: str, uid: str = Depends(firebase_uid)) -> dict:
+    require_admin(tenant_id, uid)
+    with agent_store.tenant_connection(tenant_id) as database:
+        return propagation.delete_event(
+            database, tenant_id, event_id, requested_by=uid,
+            reason="admin deletion request",
+        )
+
+
+@app.put("/v1/tenants/{tenant_id}/admin/quiet-hours")
+def admin_quiet_hours(tenant_id: UUID, body: QuietHoursBody,
+                      uid: str = Depends(firebase_uid)) -> dict:
+    if body.scope == "tenant":
+        require_admin(tenant_id, uid)
+    elif body.subject != uid:
+        require_admin(tenant_id, uid)
+    with agent_store.tenant_connection(tenant_id) as database:
+        if agent_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        try:
+            window = quiet.set_window(
+                database, tenant_id, scope=body.scope, subject=body.subject,
+                timezone_name=body.timezone, start=body.start, end=body.end,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"scope": body.scope, "subject": body.subject, "timezone": window.timezone,
+            "start": window.start.isoformat(), "end": window.end.isoformat()}
+
+
+@app.post("/v1/tenants/{tenant_id}/proactive/rules")
+def create_proactive_rule(tenant_id: UUID, body: ProactiveRuleBody,
+                          uid: str = Depends(firebase_uid)) -> dict:
+    owner = body.owner_uid or uid
+    if owner != uid:
+        require_admin(tenant_id, uid)
+    try:
+        with agent_store.tenant_connection(tenant_id) as database:
+            rule_id = proactive_rules.create_rule(
+                database, tenant_id, rule_key=body.rule_key, kind=body.kind,
+                owner_uid=owner, schedule=body.schedule, timezone_name=body.timezone,
+                config=body.config, next_run_at=body.next_run_at,
+            )
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"rule_id": str(rule_id), "rule_key": body.rule_key}
+
+
+@app.post("/v1/tenants/{tenant_id}/proactive/mutes")
+def mute_proactive_rule(tenant_id: UUID, body: MuteBody,
+                        uid: str = Depends(firebase_uid)) -> dict:
+    target = body.uid or uid
+    if target != uid:
+        require_admin(tenant_id, uid)
+    try:
+        with agent_store.tenant_connection(tenant_id) as database:
+            proactive_rules.mute(database, tenant_id, target, body.rule_key)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"uid": target, "rule_key": body.rule_key, "muted": True}
+
+
+@app.delete("/v1/tenants/{tenant_id}/proactive/mutes/{rule_key}")
+def unmute_proactive_rule(tenant_id: UUID, rule_key: str, uid_query: str | None = None,
+                          uid: str = Depends(firebase_uid)) -> dict:
+    target = uid_query or uid
+    if target != uid:
+        require_admin(tenant_id, uid)
+    with agent_store.tenant_connection(tenant_id) as database:
+        proactive_rules.unmute(database, tenant_id, target, rule_key)
+    return {"uid": target, "rule_key": rule_key, "muted": False}
