@@ -33,18 +33,28 @@ def test_github_connector_contract(monkeypatch):
     calls = []
 
     def responder(request):
-        calls.append(str(request.url))
+        calls.append((str(request.url), request.content))
         path = request.url.path
         if path == "/app/installations/42":
             data = {"id": 42}
         elif path == "/app":
-            data = {"events": ["installation", "issues", "pull_request"]}
+            data = {"events": ["installation", "issues", "pull_request", "push", "issue_comment", "pull_request_review", "pull_request_review_comment"]}
         elif path == "/app/installations/42/access_tokens":
             data = {"token": "installation-token", "expires_at": "2099-01-01T00:00:00Z"}
         elif path == "/installation/repositories":
             data = {"repositories": [issue_snapshot()["repository"]]}
-        elif path == "/repos/acme/cue/issues":
-            data = [issue_snapshot()["issue"]]
+        elif path == "/graphql":
+            query = json.loads(request.content)["query"]
+            data = {"data": {"repository": {
+                "issues" if "CueBackfill" in query else "pullRequests": {
+                    "nodes": [{"databaseId": 123, "title": "Fix login", "body": "Session expires early",
+                               "updatedAt": "2026-10-28T10:00:00Z", "author": {"databaseId": 7}}]
+                    if "CueBackfill" in query else [],
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                },
+            }}}
+        elif path in {"/repos/acme/cue/commits", "/repos/acme/cue/issues/comments"}:
+            data = []
         else:
             raise AssertionError(path)
         return httpx.Response(200, json=data)
@@ -55,7 +65,7 @@ def test_github_connector_contract(monkeypatch):
     connector.subscribe()
     raw = list(connector.backfill("42", datetime(2026, 1, 1, tzinfo=timezone.utc)))
     assert raw == [issue_snapshot()]
-    assert any("since=2026-01-01" in url for url in calls)
+    assert any(b'"since":"2026-01-01' in body for _, body in calls)
     event = connector.normalize(raw[0], uuid4())
     assert event.type == "issue.snapshot"
     assert event.acl.principals == ("github:repo:9",)

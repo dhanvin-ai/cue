@@ -4,7 +4,7 @@ Cue is an AI teammate for software teams, being developed for the Bolna AI Build
 
 The product concept is an agent with its own team identity that can answer questions about work, participate in meetings when addressed, track decisions and action items, and carry out approved actions across tools. The first planned integrations are Google Workspace, Slack, GitHub, meetings, and a project tracker.
 
-This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), and a [license decision guide](docs/licensing.md).
+This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), and a [license decision guide](docs/licensing.md).
 
 ## Planned system areas
 
@@ -47,3 +47,7 @@ The connector contract defines authorization, backfill, subscription checks, nor
 ## Phase 3 event pipeline
 
 The ingest worker stores raw GitHub events in GCS, resolves source identities, and writes canonical events to a tenant-isolated, monthly Postgres log. The outbox worker publishes committed events for later memory-store fan-out. See [pipeline setup and replay](docs/phase3-ingestion.md).
+
+## Phase 4 v1 connectors
+
+Gmail, Google Calendar, Slack, GitHub, Linear, and Recall meeting bots now have read/sync, source ACL mapping, and typed write methods. GitHub, Slack, Linear, and Recall have signed webhook ingress; Gmail and Calendar notifications trigger cursor-based backfill. See [vendor setup and remaining production work](docs/phase4-connectors.md).
