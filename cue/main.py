@@ -23,6 +23,8 @@ from pydantic import BaseModel, Field
 
 from cue.connectors.github import REQUIRED_EVENTS, secret, verify_webhook
 from cue.connectors import signatures
+from cue.meetings import notes as meeting_notes
+from cue.meetings import service as meeting_service
 from cue.memory.query import query_memory
 from cue.runtime import ingress as agent_ingress
 from cue.runtime import service as agent_service
@@ -330,3 +332,59 @@ async def internal_task(tenant_id: UUID, task_id: UUID, request: Request) -> dic
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+class MeetingAttendee(BaseModel):
+    id: str | None = None
+    email: str | None = None
+    display_name: str | None = None
+
+
+class MeetingJoinBody(BaseModel):
+    meeting_url: str = Field(min_length=1, max_length=2000)
+    title: str | None = None
+    attendees: list[MeetingAttendee] = Field(default_factory=list, max_length=100)
+
+
+@app.post("/v1/tenants/{tenant_id}/meetings", status_code=202)
+async def meeting_join(tenant_id: UUID, body: MeetingJoinBody,
+                       uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        return await run_in_threadpool(
+            meeting_service.join_meeting, tenant_id, uid, body.meeting_url,
+            [item.model_dump() for item in body.attendees], title=body.title,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/tenants/{tenant_id}/meetings/{meeting_id}/notes")
+def meeting_notes_view(tenant_id: UUID, meeting_id: UUID,
+                       uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        note = meeting_service.get_notes(tenant_id, meeting_id, uid)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if note is None:
+        raise HTTPException(status_code=404, detail="Notes not found or not accessible")
+    return note
+
+
+@app.post("/v1/tenants/{tenant_id}/meetings/{meeting_id}/end")
+async def meeting_end(tenant_id: UUID, meeting_id: UUID,
+                      uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        with agent_store.tenant_connection(tenant_id) as database:
+            if agent_store.membership(database, tenant_id, uid) is None:
+                raise PermissionError("Not a member of this tenant")
+        return await run_in_threadpool(
+            meeting_service.end_meeting, tenant_id, meeting_id,
+            notes_model=meeting_notes.GatewayNotesModel(LiteLLMGateway()),
+            registry=ToolRegistry(),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

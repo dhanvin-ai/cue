@@ -3,7 +3,6 @@
 import re
 from datetime import datetime, timedelta, timezone
 
-NAME = re.compile(r"(?<!\w)@?cue(?!\w)", re.IGNORECASE)
 DIRECT = re.compile(
     r"\b(?:can|could|would|will|do|did|are|were)\s+you\b"
     r"|\byou\s+(?:think|know|see|have|recommend|remember)\b"
@@ -12,6 +11,10 @@ DIRECT = re.compile(
 )
 FOLLOW_UP = re.compile(r"^(?:and|also|so|then|what about|how about|why|what else)\b",
                        re.IGNORECASE)
+
+
+def _mentions(text: str, agent_name: str) -> bool:
+    return re.search(rf"(?<!\w)@?{re.escape(agent_name)}(?!\w)", text, re.IGNORECASE) is not None
 
 
 def _question(text: str) -> bool:
@@ -23,7 +26,7 @@ def is_addressed(text: str, *, agent_name: str = "Cue", pause_ms: int = 0,
                  silent: bool = False) -> bool:
     if silent:
         return False
-    if NAME.search(text) or DIRECT.search(text):
+    if _mentions(text, agent_name) or DIRECT.search(text):
         return True
     if pause_ms >= 2000 and holds_answer and _question(text):
         return True

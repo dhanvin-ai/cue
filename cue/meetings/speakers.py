@@ -29,15 +29,28 @@ def map_speakers(database: psycopg.Connection, tenant_id: UUID, meeting_id: UUID
     """Resolve each diarized speaker once and persist the mapping for the meeting."""
     matches = []
     for hint in hints:
+        existing = database.execute(
+            "SELECT m.firebase_uid, p.display_name FROM meeting_speaker_map AS m "
+            "LEFT JOIN meeting_participants AS p ON p.tenant_id = m.tenant_id "
+            "AND p.meeting_id = m.meeting_id AND p.participant_id = m.participant_id "
+            "WHERE m.tenant_id = %s AND m.meeting_id = %s AND m.speaker_id = %s",
+            (tenant_id, meeting_id, hint.speaker_id),
+        ).fetchone()
         uid = _principal_uid(database, tenant_id, hint.email) if hint.email else None
+        if uid is None and hint.email is None and existing is not None:
+            uid = existing[0]
+        display_name = hint.display_name or (existing[1] if existing else None)
         kind = "attendee" if uid else "unknown"
         database.execute(
             "INSERT INTO meeting_participants (tenant_id, meeting_id, participant_id, display_name, "
             "email, firebase_uid, kind) VALUES (%s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (tenant_id, meeting_id, participant_id) DO UPDATE SET "
-            "display_name = EXCLUDED.display_name, email = EXCLUDED.email, "
-            "firebase_uid = EXCLUDED.firebase_uid, kind = EXCLUDED.kind",
-            (tenant_id, meeting_id, hint.speaker_id, hint.display_name, hint.email, uid, kind),
+            "display_name = COALESCE(EXCLUDED.display_name, meeting_participants.display_name), "
+            "email = COALESCE(EXCLUDED.email, meeting_participants.email), "
+            "firebase_uid = COALESCE(EXCLUDED.firebase_uid, meeting_participants.firebase_uid), "
+            "kind = CASE WHEN COALESCE(EXCLUDED.firebase_uid, meeting_participants.firebase_uid) "
+            "IS NOT NULL THEN 'attendee' ELSE EXCLUDED.kind END",
+            (tenant_id, meeting_id, hint.speaker_id, display_name, hint.email, uid, kind),
         )
         label = KNOWN if uid else UNKNOWN
         database.execute(
@@ -50,7 +63,7 @@ def map_speakers(database: psycopg.Connection, tenant_id: UUID, meeting_id: UUID
              1.0 if uid else 0.0),
         )
         matches.append(SpeakerMatch(hint.speaker_id, hint.speaker_id, uid, label,
-                                    hint.display_name))
+                                    display_name))
     return matches
 
 
