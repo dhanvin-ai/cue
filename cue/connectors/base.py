@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Protocol
 from uuid import UUID
@@ -21,6 +21,7 @@ class CanonicalEvent:
     objects: tuple[str, ...]
     text: str
     acl: AccessControl
+    facts: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

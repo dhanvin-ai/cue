@@ -19,9 +19,11 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from google.cloud import pubsub_v1
+from pydantic import BaseModel, Field
 
 from cue.connectors.github import REQUIRED_EVENTS, secret, verify_webhook
 from cue.connectors import signatures
+from cue.memory.query import query_memory
 
 app = FastAPI(title="Cue API")
 bearer = HTTPBearer(auto_error=False)
@@ -186,3 +188,23 @@ def me(tenant_id: UUID, uid: str = Depends(firebase_uid)) -> dict[str, str]:
     if row is None:
         raise HTTPException(status_code=403, detail="Not a member of this tenant")
     return {"tenant_id": str(tenant_id), "firebase_uid": uid, "role": row[0]}
+
+
+class MemoryQuestion(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
+    participants: list[str] = Field(default_factory=list, max_length=20)
+    target: dict | None = None
+
+
+@app.post("/v1/tenants/{tenant_id}/memory/query")
+async def memory_query(tenant_id: UUID, request: MemoryQuestion,
+                       uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        return await run_in_threadpool(
+            query_memory, tenant_id, uid, request.question, request.participants,
+            os.environ["DATABASE_URL"], request.target,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

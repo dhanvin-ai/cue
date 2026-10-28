@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import replace
 from datetime import datetime, timezone
-from uuid import UUID, uuid4
+from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
 
 import psycopg
 from google.api_core.exceptions import PreconditionFailed
@@ -15,6 +15,31 @@ from psycopg.types.json import Jsonb
 from cue.connectors.base import AccessControl, CanonicalEvent
 from cue.connectors.github import GitHubConnector
 from cue.connectors.normalize_v1 import normalize as normalize_v1
+
+
+def _source_url(raw: dict, source: str) -> str | None:
+    if source == "github":
+        item = next((raw[key] for key in ("issue", "pull_request", "comment", "review", "commit")
+                     if isinstance(raw.get(key), dict)), {})
+        if item.get("html_url"):
+            return item["html_url"]
+        repo = raw.get("repository") or {}
+        base = repo.get("html_url")
+        if base and item.get("number") and ("issue" in raw or "pull_request" in raw):
+            path = "pull" if "pull_request" in raw else "issues"
+            return f"{base}/{path}/{item['number']}"
+    if source == "gmail":
+        thread = (raw.get("message") or {}).get("threadId")
+        return f"https://mail.google.com/mail/u/0/#all/{thread}" if thread else None
+    if source == "calendar":
+        return (raw.get("event") or {}).get("htmlLink")
+    if source == "linear":
+        return (raw.get("data") or {}).get("url")
+    if source == "slack":
+        item = raw.get("event") or {}
+        channel, stamp = item.get("channel"), item.get("ts")
+        return f"https://app.slack.com/archives/{channel}/p{stamp.replace('.', '')}" if channel and stamp else None
+    return None
 
 
 def _routing(database: psycopg.Connection, raw: dict, attributes: dict) -> tuple[UUID, UUID]:
@@ -111,10 +136,36 @@ def _resolve(database: psycopg.Connection, tenant_id: UUID, alias: str) -> str:
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
         (f"{tenant_id}:{alias}",),
     )
+    claim = database.execute(
+        "SELECT firebase_uid FROM identity_claims WHERE tenant_id = %s AND alias = %s",
+        (tenant_id, alias),
+    ).fetchone()
     row = database.execute(
         "SELECT entity_id FROM entity_aliases WHERE tenant_id = %s AND alias = %s",
         (tenant_id, alias),
     ).fetchone()
+    if claim and kind == "person":
+        canonical_id = uuid5(NAMESPACE_URL, f"cue:{tenant_id}:person:{claim[0]}")
+        database.execute(
+            "INSERT INTO entities (tenant_id, id, kind) VALUES (%s, %s, 'person') ON CONFLICT DO NOTHING",
+            (tenant_id, canonical_id),
+        )
+        if row and row[0] != canonical_id:
+            database.execute(
+                "INSERT INTO identity_entity_map (tenant_id, from_id, to_id) VALUES (%s, %s, %s) "
+                "ON CONFLICT (tenant_id, from_id) DO UPDATE SET to_id = EXCLUDED.to_id",
+                (tenant_id, row[0], canonical_id),
+            )
+            database.execute(
+                "UPDATE entity_aliases SET entity_id = %s WHERE tenant_id = %s AND alias = %s",
+                (canonical_id, tenant_id, alias),
+            )
+        elif not row:
+            database.execute(
+                "INSERT INTO entity_aliases (tenant_id, alias, entity_id) VALUES (%s, %s, %s)",
+                (tenant_id, alias, canonical_id),
+            )
+        return f"person:{canonical_id}"
     if row:
         return f"{kind}:{row[0]}"
     entity_id = uuid4()
@@ -158,6 +209,10 @@ def process_raw(data: bytes, attributes: dict, database_url: str, storage_client
                 return False
             actors = [_resolve(database, tenant_id, alias) for alias in event.actors]
             objects = [_resolve(database, tenant_id, alias) for alias in event.objects]
+            facts = dict(event.facts)
+            if "owner_alias" in facts:
+                owner_alias = facts.pop("owner_alias")
+                facts["owner_id"] = _resolve(database, tenant_id, owner_alias) if owner_alias else None
             payload = {
                 "tenant_id": str(tenant_id),
                 "event_id": event.event_id,
@@ -166,12 +221,14 @@ def process_raw(data: bytes, attributes: dict, database_url: str, storage_client
                 "occurred_at": event.occurred_at.isoformat(),
                 "actors": actors,
                 "objects": objects,
+                "facts": facts,
                 "text": event.text,
                 "acl": {
                     "visibility": event.acl.visibility,
                     "principals": list(event.acl.principals),
                 },
                 "raw_ref": raw_ref,
+                "source_url": _source_url(raw, attributes["source"]),
             }
             database.execute(
                 "INSERT INTO event_log (tenant_id, event_id, occurred_at, source, type, payload) "

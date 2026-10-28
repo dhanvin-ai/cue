@@ -19,6 +19,10 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      qdrant:
+        image: qdrant/qdrant:v1.19.2
+        ports:
+          - 6333:6333
     env:
       MIGRATION_DATABASE_URL: postgresql://cue_admin:cue_local_admin@localhost:5432/cue
       DATABASE_URL: postgresql://cue_app:cue_local_app@localhost:5432/cue
@@ -26,6 +30,7 @@ jobs:
       CUE_APP_DB_PASSWORD: cue_local_app
       CUE_INGEST_DB_PASSWORD: cue_local_ingest
       FIREBASE_PROJECT_ID: cue-test
+      QDRANT_URL: http://localhost:6333
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -19,7 +19,9 @@ query CueBackfill($owner: String!, $name: String!, $since: DateTime!, $cursor: S
   repository(owner: $owner, name: $name) {
     issues(first: 100, after: $cursor, states: [OPEN, CLOSED],
            filterBy: {since: $since}, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes { databaseId title body updatedAt author { ... on User { databaseId } } }
+      nodes { databaseId number title body state updatedAt
+              author { ... on User { databaseId } }
+              assignees(first: 1) { nodes { databaseId login } } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -30,7 +32,9 @@ query CuePullBackfill($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(first: 100, after: $cursor, states: [OPEN, CLOSED, MERGED],
                  orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes { databaseId number title body updatedAt mergedAt author { ... on User { databaseId } } }
+      nodes { databaseId number title body state updatedAt mergedAt
+              author { ... on User { databaseId } }
+              assignees(first: 1) { nodes { databaseId login } } }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -142,7 +146,11 @@ class GitHubConnector:
             owner = quote(repo["owner"]["login"], safe="")
             name = quote(repo["name"], safe="")
             for node in self._graphql_pages(external_id, repo, since_utc, "issues"):
-                issue = {"id": node["databaseId"], "title": node["title"],
+                assignees = (node.get("assignees") or {}).get("nodes") or []
+                issue = {"id": node["databaseId"], "number": node.get("number"),
+                         "state": (node.get("state") or "").lower(), "assignee": (
+                             {"id": assignees[0]["databaseId"], "login": assignees[0]["login"]}
+                             if assignees else None), "title": node["title"],
                          "body": node.get("body"), "updated_at": node["updatedAt"],
                          "user": {"id": (node.get("author") or {}).get("databaseId")}}
                 yield {"event": "snapshot", "issue": issue, "repository": repo}
@@ -157,7 +165,11 @@ class GitHubConnector:
             for node in self._graphql_pages(external_id, repo, since_utc, "pullRequests"):
                 if node["updatedAt"] < since_utc:
                     break
+                assignees = (node.get("assignees") or {}).get("nodes") or []
                 pull = {"id": node["databaseId"], "number": node["number"],
+                        "state": (node.get("state") or "").lower(), "assignee": (
+                            {"id": assignees[0]["databaseId"], "login": assignees[0]["login"]}
+                            if assignees else None),
                         "title": node["title"], "body": node.get("body"),
                         "updated_at": node["updatedAt"], "merged_at": node.get("mergedAt"),
                         "user": {"id": (node.get("author") or {}).get("databaseId")}}
@@ -236,10 +248,15 @@ class GitHubConnector:
         updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
         repository = repo
         action = raw.get("action", "snapshot")
-        if kind == "pr" and action == "closed" and item.get("merged"):
+        if kind == "pr" and action in {"closed", "snapshot"} and (item.get("merged") or item.get("merged_at")):
             action = "merged"
             if item.get("merged_at"):
                 updated = datetime.fromisoformat(item["merged_at"].replace("Z", "+00:00"))
+        assignee = item.get("assignee") or {}
+        facts = {"state": item.get("state")}
+        if "assignee" in item:
+            facts["owner_alias"] = f"github:user:{assignee['id']}" if assignee.get("id") else None
+            facts["owner_label"] = assignee.get("login")
         return CanonicalEvent(
             tenant_id=tenant_id,
             event_id=f"gh:{kind}:{item['id']}:{item['updated_at']}:{raw.get('action', 'snapshot')}",
@@ -249,8 +266,9 @@ class GitHubConnector:
             actors=((f"github:user:{(raw.get('sender') or item.get('user') or {}).get('id')}",)
                     if (raw.get('sender') or item.get('user') or {}).get('id') else ()),
             objects=(f"github:{kind}:{item['id']}", f"github:repo:{repository['id']}"),
-            text=f"{item['title']}\n{item.get('body') or ''}",
+            text=f"{item['title']}\n{item.get('body') or ''}\n{assignee.get('login') or ''}",
             acl=self.acl(raw),
+            facts=facts,
         )
 
     def tools(self) -> tuple[Tool, ...]:
@@ -258,6 +276,13 @@ class GitHubConnector:
             Tool("github.read_issue", 0), Tool("github.create_issue", 2),
             Tool("github.comment_issue", 2), Tool("github.request_review", 2),
         )
+
+    def read_issue(self, installation_id: str, owner: str, repo: str, number: int) -> tuple[dict, dict]:
+        path = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+        token = self._installation_token(installation_id)
+        repository = self._request("GET", path, token)
+        issue = self._request("GET", f"{path}/issues/{int(number)}", token)
+        return repository, issue
 
     def create_issue(self, installation_id: str, owner: str, repo: str, title: str, body: str) -> Any:
         path = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}/issues"

@@ -55,6 +55,12 @@ def normalize(source: str, raw: Mapping[str, Any], tenant_id: UUID) -> Canonical
         team_id = item.get("teamId") or (item.get("team") or {}).get("id")
         project_id = item.get("projectId") or (item.get("project") or {}).get("id")
         org_id = raw["organizationId"]
+        assignee = item.get("assignee") or {}
+        owner_id = item.get("assigneeId") or assignee.get("id")
+        facts = {"state": (item.get("state") or {}).get("name")}
+        if "assignee" in item or "assigneeId" in item:
+            facts["owner_alias"] = f"linear:person:{owner_id}" if owner_id else None
+            facts["owner_label"] = assignee.get("name")
         return CanonicalEvent(
             tenant_id, f"linear:{item['id']}:{item.get('updatedAt', raw.get('createdAt', ''))}",
             source, f"linear.{raw.get('type', 'Issue').lower()}.{raw.get('action', 'snapshot')}",
@@ -62,8 +68,9 @@ def normalize(source: str, raw: Mapping[str, Any], tenant_id: UUID) -> Canonical
             (f"linear:person:{raw['actor']['id']}",) if raw.get("actor") and raw["actor"].get("id") else (),
             (f"linear:issue:{item['id']}",) + ((f"linear:team:{team_id}",) if team_id else ()) +
             ((f"linear:project:{project_id}",) if project_id else ()),
-            f"{item.get('title', '')}\n{item.get('description') or item.get('body') or ''}\n{(item.get('state') or {}).get('name', '')}",
+            f"{item.get('title', '')}\n{item.get('description') or item.get('body') or ''}\n{(item.get('state') or {}).get('name', '')}\n{assignee.get('name') or ''}",
             AccessControl("restricted", (f"linear:team:{team_id}",) if team_id else (f"linear:org:{org_id}:admins",)),
+            facts=facts,
         )
     if source == "recall":
         data = raw["data"]
