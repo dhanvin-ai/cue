@@ -40,6 +40,7 @@ class QwenEmbedder:
 class QdrantIndex:
     def __init__(self, client: httpx.Client | None = None):
         self.client = client or httpx.Client(timeout=30)
+        self._ready: set[UUID] = set()
 
     @staticmethod
     def collection(tenant_id: UUID) -> str:
@@ -52,6 +53,8 @@ class QdrantIndex:
         )
 
     def ensure_collection(self, tenant_id: UUID) -> None:
+        if tenant_id in self._ready:
+            return
         path = "/collections/" + self.collection(tenant_id)
         response = self._request("GET", path)
         if response.status_code == 404:
@@ -69,6 +72,7 @@ class QdrantIndex:
             size = response.json()["result"]["config"]["params"]["vectors"]["size"]
             if size != QwenEmbedder.dimensions:
                 raise ValueError("Qdrant collection dimension does not match Qwen3")
+        self._ready.add(tenant_id)
 
     def upsert(self, tenant_id: UUID, event: dict, vector: list[float]) -> None:
         self.ensure_collection(tenant_id)

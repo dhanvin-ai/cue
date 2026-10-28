@@ -7,11 +7,13 @@ from google.api_core.exceptions import DeadlineExceeded
 from google.cloud import pubsub_v1
 
 from cue.memory.project import project_event
+from cue.memory.vector import QdrantIndex, QwenEmbedder
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     subscriber = pubsub_v1.SubscriberClient()
+    index, embedder = QdrantIndex(), QwenEmbedder()
     subscription = os.environ["CANONICAL_EVENTS_SUBSCRIPTION"]
     while True:
         try:
@@ -23,7 +25,7 @@ def main() -> None:
                 subscriber.modify_ack_deadline(request={"subscription": subscription,
                     "ack_ids": [received.ack_id], "ack_deadline_seconds": 600})
                 project_event(received.message.data, dict(received.message.attributes),
-                              os.environ["INGEST_DATABASE_URL"])
+                              os.environ["INGEST_DATABASE_URL"], index, embedder)
                 subscriber.acknowledge(request={"subscription": subscription,
                     "ack_ids": [received.ack_id]})
             except Exception:
