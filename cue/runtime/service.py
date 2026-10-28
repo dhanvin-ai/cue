@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from cue.runtime import context as context_builder
 from cue.runtime import planner, policy, responder, scheduler, store
+from cue.controls import switches
 from cue.runtime.executor import ToolFailed, ToolRegistry, run_tool
 from cue.runtime.gateway import ModelUnavailable
 
@@ -76,6 +77,13 @@ def run_task(tenant_id, task_id, *, gateway, registry: ToolRegistry, database_ur
         approvals = store.task_approvals(database, tenant_id, task_id)
         if task["status"] in {"completed", "cancelled"}:
             return snapshot(task, approvals)
+        paused = switches.pause_reason(database, tenant_id)
+        if paused:
+            store.audit(database, tenant_id, actor="cue", action="control", task_id=task_id,
+                        decision="blocked", detail={"scope": paused.scope, "mode": paused.mode})
+            store.set_status(database, tenant_id, task_id, "cancelled",
+                             answer="Paused by an administrator kill switch.")
+            return snapshot(store.get_task(database, tenant_id, task_id), approvals)
         if any(row[3] == "rejected" for row in approvals):
             store.set_status(database, tenant_id, task_id, "cancelled",
                              answer="The requested action was rejected.")
@@ -121,6 +129,15 @@ def run_task(tenant_id, task_id, *, gateway, registry: ToolRegistry, database_ur
             store.audit(database, tenant_id, actor=task["requester_uid"], action="policy",
                         task_id=task_id, tool=call.name, tier=decision.tier,
                         decision=decision.mode, detail={"reason": decision.reason})
+            paused = switches.pause_reason(database, tenant_id, call.name.split(".", 1)[0])
+            if paused:
+                store.audit(database, tenant_id, actor="cue", action="control", task_id=task_id,
+                            tool=call.name, tier=decision.tier, decision="blocked",
+                            detail={"scope": paused.scope, "mode": paused.mode})
+                store.set_status(database, tenant_id, task_id, "cancelled",
+                                 answer=f"Paused by an administrator kill switch: {call.name}.")
+                return snapshot(store.get_task(database, tenant_id, task_id),
+                                store.task_approvals(database, tenant_id, task_id))
 
             if decision.forbidden:
                 return _finish(database, tenant_id, task,

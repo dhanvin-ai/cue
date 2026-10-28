@@ -4,7 +4,7 @@ Cue is an AI teammate for software teams, being developed for the Bolna AI Build
 
 The product concept is an agent with its own team identity that can answer questions about work, participate in meetings when addressed, track decisions and action items, and carry out approved actions across tools. The first planned integrations are Google Workspace, Slack, GitHub, meetings, and a project tracker.
 
-This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), the [Phase 6 agent runtime](docs/phase6.md), the [Phase 7 meeting voice](docs/phase7.md), and a [license decision guide](docs/licensing.md).
+This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), the [Phase 6 agent runtime](docs/phase6.md), the [Phase 7 meeting voice](docs/phase7.md), the [Phase 8 proactive and pilot controls](docs/phase8.md), and a [license decision guide](docs/licensing.md).
 
 Before Phase 6, [Playwright API end-to-end tests](docs/e2e-testing.md) exercise the backend over HTTP with real Postgres and Qdrant services in CI.
 
@@ -65,3 +65,7 @@ Slack, email, and web requests enter one runtime that builds ACL-filtered contex
 ## Phase 7 meeting voice
 
 The Recall meeting bot joins calls, diarized speakers map to tenant members, and Cue answers only when addressed. Responses stream through TTS with interruption handling. After the meeting, transcript-backed summaries, decisions, and action items are published under the attendee ACL; tool actions go through the Phase 6 approval flow. See [meeting voice setup](docs/phase7.md).
+
+## Phase 8 proactive and pilot controls
+
+Scheduled digests, reminders, stale-PR checks, and overdue-action follow-ups run through the Phase 6 runtime and approval tiers, with quiet hours and per-person mutes. Tenant and connector kill switches stop ingestion and outbound work, buffering or dropping deliveries until resume. Deletion and revocation purge the event log, graph, vectors, summaries, and meeting notes; reconciliation reports drift and backfills gaps. Admins can export audit rows and inspect the access report, and every tenant exposes pilot status. See [pilot runbook](docs/phase8.md).

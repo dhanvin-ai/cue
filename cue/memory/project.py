@@ -51,6 +51,13 @@ def project_event(data: bytes, attributes: dict, database_url: str,
     with psycopg.connect(database_url, autocommit=True) as database:
         with database.transaction():
             database.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
+            tombstone = database.execute(
+                "SELECT 1 FROM deletion_tombstones WHERE tenant_id = %s "
+                "AND (event_id = %s OR source = %s) LIMIT 1",
+                (tenant_id, event["event_id"], event["source"]),
+            ).fetchone()
+            if tombstone is not None:
+                return False
             original = database.execute(
                 "SELECT payload FROM event_log WHERE tenant_id = %s AND event_id = %s",
                 (tenant_id, event["event_id"]),

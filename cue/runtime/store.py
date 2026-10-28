@@ -34,7 +34,8 @@ def audit(database: psycopg.Connection, tenant_id: UUID, *, actor: str, action: 
 
 def membership(database: psycopg.Connection, tenant_id: UUID, uid: str) -> str | None:
     row = database.execute(
-        "SELECT role FROM users WHERE tenant_id = %s AND firebase_uid = %s", (tenant_id, uid)
+        "SELECT role FROM users WHERE tenant_id = %s AND firebase_uid = %s "
+        "AND revoked_at IS NULL", (tenant_id, uid)
     ).fetchone()
     return row[0] if row else None
 

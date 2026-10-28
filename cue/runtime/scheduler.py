@@ -9,7 +9,8 @@ from cue.runtime import cron, store
 
 
 def tick(tenant_id: UUID, queue, *, database_url: str | None = None,
-         now: datetime | None = None, limit: int = 20) -> list[UUID]:
+         now: datetime | None = None, limit: int = 20,
+         proactive: bool = False) -> list[UUID]:
     moment = now or datetime.now(timezone.utc)
     with store.tenant_connection(tenant_id, database_url) as database:
         due = store.due_tasks(database, moment, limit)
@@ -21,6 +22,9 @@ def tick(tenant_id: UUID, queue, *, database_url: str | None = None,
             )
     for task_id in due:
         queue.enqueue(tenant_id, task_id)
+    if proactive:
+        from cue.proactive import rules
+        due.extend(rules.tick(tenant_id, database_url=database_url, queue=queue, now=moment))
     return due
 
 

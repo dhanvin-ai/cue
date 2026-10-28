@@ -27,7 +27,7 @@ def main() -> None:
     registry = ToolRegistry()  # Register ToolSpec handlers before enabling writes.
     for tenant_id in ([args.tenant] if args.tenant else tenant_ids()):
         queue = LocalQueue()
-        tick(tenant_id, queue, limit=args.limit)
+        tick(tenant_id, queue, limit=args.limit, proactive=True)
         for _, task_id, _ in queue.drain():
             try:
                 print(run_task(tenant_id, task_id, gateway=gateway, registry=registry))
