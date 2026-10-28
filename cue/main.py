@@ -24,6 +24,11 @@ from pydantic import BaseModel, Field
 from cue.connectors.github import REQUIRED_EVENTS, secret, verify_webhook
 from cue.connectors import signatures
 from cue.memory.query import query_memory
+from cue.runtime import ingress as agent_ingress
+from cue.runtime import service as agent_service
+from cue.runtime import store as agent_store
+from cue.runtime.executor import ToolRegistry
+from cue.runtime.gateway import LiteLLMGateway
 
 app = FastAPI(title="Cue API")
 bearer = HTTPBearer(auto_error=False)
@@ -208,3 +213,120 @@ async def memory_query(tenant_id: UUID, request: MemoryQuestion,
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class AgentRequestBody(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+    request_id: str | None = None
+    participants: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ApprovalBody(BaseModel):
+    approve: bool
+
+
+@app.post("/v1/tenants/{tenant_id}/agent/requests", status_code=202)
+async def agent_request(tenant_id: UUID, body: AgentRequestBody,
+                        uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        runtime_request = agent_ingress.from_web(tenant_id, uid, body.model_dump())
+        task_id, created = await run_in_threadpool(agent_ingress.submit, runtime_request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except agent_ingress.IngressRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"task_id": str(task_id), "created": created, "status": "queued"}
+
+
+@app.get("/v1/tenants/{tenant_id}/agent/tasks/{task_id}")
+def agent_task(tenant_id: UUID, task_id: UUID, uid: str = Depends(firebase_uid)) -> dict:
+    with agent_store.tenant_connection(tenant_id) as database:
+        if agent_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        task = agent_store.get_task(database, tenant_id, task_id)
+        approvals = agent_store.task_approvals(database, tenant_id, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return agent_service.snapshot(task, approvals)
+
+
+@app.post("/v1/tenants/{tenant_id}/agent/approvals/{approval_id}")
+async def agent_approval(tenant_id: UUID, approval_id: UUID, body: ApprovalBody,
+                         uid: str = Depends(firebase_uid)) -> dict:
+    try:
+        return await run_in_threadpool(
+            agent_service.decide, tenant_id, approval_id, uid, body.approve,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except agent_service.TaskNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/webhooks/slack/agent")
+async def slack_agent_webhook(request: Request) -> dict:
+    body = await request.body()
+    if len(body) > 9_000_000:
+        raise HTTPException(status_code=413)
+    key = await run_in_threadpool(secret, os.environ["SLACK_SIGNING_SECRET_VERSION"])
+    if not signatures.slack(body, request.headers, key):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    payload = json.loads(body)
+    if payload.get("type") == "url_verification":
+        return {"challenge": payload["challenge"]}
+    event = payload.get("event") or {}
+    if (payload.get("type") != "event_callback"
+            or event.get("type") not in {"app_mention", "message"}
+            or event.get("bot_id") or event.get("subtype")):
+        return {"accepted": False}
+    tenant_id = await run_in_threadpool(
+        agent_ingress.tenant_for_source, "slack", payload.get("team_id"))
+    if tenant_id is None:
+        raise HTTPException(status_code=404, detail="Slack team is not linked to a tenant")
+    try:
+        runtime_request = agent_ingress.from_slack(tenant_id, payload)
+        task_id, created = await run_in_threadpool(agent_ingress.submit, runtime_request)
+    except agent_ingress.IngressRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"accepted": True, "task_id": str(task_id), "created": created}
+
+
+@app.post("/webhooks/email/agent")
+async def email_agent_webhook(request: Request) -> dict:
+    body = await request.body()
+    key = await run_in_threadpool(secret, os.environ["EMAIL_INGRESS_SECRET_VERSION"])
+    signature = request.headers.get("X-Cue-Signature", "")
+    expected = "sha256=" + hmac.new(key, body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Invalid email signature")
+    payload = json.loads(body)
+    try:
+        runtime_request = agent_ingress.from_email(
+            UUID(payload["tenant_id"]), payload["firebase_uid"], payload)
+        task_id, created = await run_in_threadpool(agent_ingress.submit, runtime_request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except agent_ingress.IngressRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid email payload") from exc
+    return {"accepted": True, "task_id": str(task_id), "created": created}
+
+
+@app.post("/internal/tasks/{tenant_id}/{task_id}", status_code=202)
+async def internal_task(tenant_id: UUID, task_id: UUID, request: Request) -> dict:
+    key = await run_in_threadpool(secret, os.environ["INTERNAL_TASK_TOKEN_SECRET_VERSION"])
+    token = request.headers.get("X-Cue-Task-Token", "")
+    if not token or not hmac.compare_digest(token, key.decode()):
+        raise HTTPException(status_code=401, detail="Invalid task token")
+    try:
+        return await run_in_threadpool(
+            agent_service.run_task, tenant_id, task_id,
+            gateway=LiteLLMGateway(), registry=ToolRegistry(),
+        )
+    except agent_service.TaskNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
