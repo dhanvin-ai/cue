@@ -4,6 +4,8 @@ import json
 
 import psycopg
 
+from cue.controls import switches
+
 
 def publish_pending(database_url: str, publisher, topic: str) -> int:
     count = 0
@@ -14,6 +16,8 @@ def publish_pending(database_url: str, publisher, topic: str) -> int:
         for (tenant_id,) in tenants:
             with database.transaction():
                 database.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
+                if switches.tenant_paused(database, tenant_id):
+                    continue
                 pending = database.execute(
                     "SELECT event_id, payload FROM event_outbox WHERE published_at IS NULL "
                     "ORDER BY event_id LIMIT 100"

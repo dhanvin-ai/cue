@@ -5,6 +5,7 @@ from typing import Protocol
 
 import psycopg
 
+from cue.controls import switches
 from cue.meetings import store
 from cue.meetings.models import MeetingNotesDraft, Turn
 from cue.runtime.gateway import Completion, Gateway, json_reply
@@ -84,6 +85,8 @@ class RecordingPublisher:
 
 def publish_pending(database: psycopg.Connection, tenant_id, publisher: NotesPublisher,
                     limit: int = 100) -> int:
+    if switches.tenant_paused(database, tenant_id):
+        return 0
     rows = database.execute(
         "SELECT note_id, destination, target, payload FROM meeting_note_deliveries "
         "WHERE tenant_id = %s AND published_at IS NULL ORDER BY note_id LIMIT %s",

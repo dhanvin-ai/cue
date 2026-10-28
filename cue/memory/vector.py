@@ -86,6 +86,23 @@ class QdrantIndex:
         )
         response.raise_for_status()
 
+    def delete_event(self, tenant_id: UUID, event_id: str) -> None:
+        point_id = str(uuid5(NAMESPACE_URL, f"cue:{tenant_id}:{event_id}"))
+        response = self._request(
+            "POST", f"/collections/{self.collection(tenant_id)}/points/delete?wait=true",
+            json={"points": [point_id]},
+        )
+        if response.status_code != 404:
+            response.raise_for_status()
+
+    def delete_source(self, tenant_id: UUID, source: str) -> None:
+        response = self._request(
+            "POST", f"/collections/{self.collection(tenant_id)}/points/delete?wait=true",
+            json={"filter": {"must": [{"key": "source", "match": {"value": source}}]}},
+        )
+        if response.status_code != 404:
+            response.raise_for_status()
+
     def search(self, tenant_id: UUID, vector: list[float], principals: set[str], limit: int) -> list[str]:
         allowed = [{"key": "visibility", "match": {"value": "public"}}]
         if principals:

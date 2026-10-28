@@ -15,6 +15,7 @@ from psycopg.types.json import Jsonb
 from cue.connectors.base import AccessControl, CanonicalEvent
 from cue.connectors.github import GitHubConnector
 from cue.connectors.normalize_v1 import normalize as normalize_v1
+from cue.controls import switches
 
 
 def _source_url(raw: dict, source: str) -> str | None:
@@ -186,8 +187,22 @@ def process_raw(data: bytes, attributes: dict, database_url: str, storage_client
     if not isinstance(raw, dict):
         raise ValueError("Raw payload must be a JSON object")
     with psycopg.connect(database_url, autocommit=True) as database:
-        tenant_id, _ = _routing(database, raw, attributes)
+        tenant_id, connection_id = _routing(database, raw, attributes)
+        # Autocommit makes a transaction-local setting vanish before the gate's next query.
+        database.execute("SELECT set_config('app.tenant_id', %s, false)", (str(tenant_id),))
+        gate = switches.ingestion_gate(
+            database, tenant_id, connection_id, attributes["source"], attributes, data,
+        )
+        if gate != "active":
+            return False
         event = _canonical(raw, attributes, tenant_id)
+        tombstone = database.execute(
+            "SELECT 1 FROM deletion_tombstones WHERE tenant_id = %s "
+            "AND (event_id = %s OR source = %s) LIMIT 1",
+            (tenant_id, event.event_id, event.source),
+        ).fetchone()
+        if tombstone is not None:
+            return False
         bucket = os.environ["RAW_GCS_BUCKET"]
         key = f"raw/{tenant_id}/{attributes['source']}/{hashlib.sha256(data).hexdigest()}.json"
         client = storage_client or storage.Client()
