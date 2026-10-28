@@ -4,7 +4,7 @@ Cue is an AI teammate for software teams, being developed for the Bolna AI Build
 
 The product concept is an agent with its own team identity that can answer questions about work, participate in meetings when addressed, track decisions and action items, and carry out approved actions across tools. The first planned integrations are Google Workspace, Slack, GitHub, meetings, and a project tracker.
 
-This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), and a [license decision guide](docs/licensing.md).
+This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), the [Phase 6 agent runtime](docs/phase6.md), and a [license decision guide](docs/licensing.md).
 
 ## Planned system areas
 
@@ -55,3 +55,7 @@ Gmail, Google Calendar, Slack, GitHub, Linear, and Recall meeting bots now have 
 ## Phase 5 memory and query routing
 
 Canonical events project into tenant-isolated Postgres documents and temporal graph edges, and into Qdrant collections using Qwen3 embeddings. The query API routes exact counts, ownership, current status, recall, and period questions through the appropriate store after resolving each requester's source principals. Daily, weekly, monthly, and yearly summaries retain citations to source events. See [memory setup and query examples](docs/phase5-memory.md).
+
+## Phase 6 agent runtime
+
+Slack, email, and web requests enter one runtime that builds ACL-filtered context, plans tool calls, checks each against the PDF risk tiers, and records every decision in an append-only audit log. Tasks retry with idempotent tool calls; tier 2 and 3 actions wait for approval. See [runtime setup and tool registration](docs/phase6.md).
