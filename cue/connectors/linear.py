@@ -35,7 +35,7 @@ class LinearConnector:
     def backfill(self, external_id: str, since: datetime) -> Iterable[Mapping[str, Any]]:
         query = """query($after: String) {
           issues(first: 100, after: $after, orderBy: updatedAt) {
-            nodes { id identifier title description updatedAt team { id } assignee { id }
+            nodes { id identifier title description updatedAt team { id } assignee { id name }
                     state { id name } cycle { id name } project { id name } }
             pageInfo { hasNextPage endCursor }
           }
@@ -62,6 +62,12 @@ class LinearConnector:
 
     def tools(self) -> tuple[Tool, ...]:
         return (Tool("linear.read_issue", 0), Tool("linear.create_issue", 2))
+
+    def read_issue(self, issue_id: str) -> dict:
+        return self._query(
+            "query($id: String!) { issue(id: $id) { id title url team { id } state { name } } }",
+            {"id": issue_id},
+        )["issue"]
 
     def create_issue(self, team_id: str, title: str, description: str) -> Any:
         data = self._query(

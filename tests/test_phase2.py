@@ -21,6 +21,9 @@ def issue_snapshot(private=True):
         "repository": {"id": 9, "private": private, "name": "cue", "owner": {"login": "acme"}},
         "issue": {
             "id": 123,
+            "number": None,
+            "state": "",
+            "assignee": None,
             "title": "Fix login",
             "body": "Session expires early",
             "updated_at": "2026-10-28T10:00:00Z",
