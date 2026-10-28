@@ -14,7 +14,32 @@ from google.cloud import secretmanager
 from cue.connectors.base import AccessControl, CanonicalEvent, Tool
 
 API = "https://api.github.com"
-REQUIRED_EVENTS = {"installation", "issues", "pull_request"}
+GRAPHQL = """
+query CueBackfill($owner: String!, $name: String!, $since: DateTime!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    issues(first: 100, after: $cursor, states: [OPEN, CLOSED],
+           filterBy: {since: $since}, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { databaseId title body updatedAt author { ... on User { databaseId } } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+PULLS_GRAPHQL = """
+query CuePullBackfill($owner: String!, $name: String!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: 100, after: $cursor, states: [OPEN, CLOSED, MERGED],
+                 orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { databaseId number title body updatedAt mergedAt author { ... on User { databaseId } } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+REQUIRED_EVENTS = {
+    "installation", "issues", "pull_request", "push", "issue_comment",
+    "pull_request_review", "pull_request_review_comment",
+}
 
 
 def secret(ref: str) -> bytes:
@@ -89,15 +114,62 @@ class GitHubConnector:
                 return
             page += 1
 
+    def _graphql_pages(self, external_id: str, repo: Mapping[str, Any], since: str,
+                       kind: str) -> Iterable[Mapping[str, Any]]:
+        cursor = None
+        while True:
+            variables = {"owner": repo["owner"]["login"], "name": repo["name"], "cursor": cursor}
+            if kind == "issues":
+                variables["since"] = since
+            result = self._request(
+                "POST", "/graphql", self._installation_token(external_id),
+                json={"query": GRAPHQL if kind == "issues" else PULLS_GRAPHQL, "variables": variables},
+            )
+            if result.get("errors"):
+                raise RuntimeError(f"GitHub GraphQL backfill failed: {result['errors']}")
+            connection = result["data"]["repository"][kind]
+            for node in connection["nodes"]:
+                if node.get("databaseId"):
+                    yield node
+            info = connection["pageInfo"]
+            if not info["hasNextPage"]:
+                return
+            cursor = info["endCursor"]
+
     def backfill(self, external_id: str, since: datetime) -> Iterable[Mapping[str, Any]]:
         since_utc = since.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
         for repo in self._pages("/installation/repositories", external_id):
             owner = quote(repo["owner"]["login"], safe="")
             name = quote(repo["name"], safe="")
-            for issue in self._pages(
-                f"/repos/{owner}/{name}/issues", external_id, {"state": "all", "since": since_utc}
-            ):
+            for node in self._graphql_pages(external_id, repo, since_utc, "issues"):
+                issue = {"id": node["databaseId"], "title": node["title"],
+                         "body": node.get("body"), "updated_at": node["updatedAt"],
+                         "user": {"id": (node.get("author") or {}).get("databaseId")}}
                 yield {"event": "snapshot", "issue": issue, "repository": repo}
+            for commit in self._pages(
+                f"/repos/{owner}/{name}/commits", external_id, {"since": since_utc}
+            ):
+                yield {"event": "snapshot", "commit": commit, "repository": repo}
+            for comment in self._pages(
+                f"/repos/{owner}/{name}/issues/comments", external_id, {"since": since_utc}
+            ):
+                yield {"event": "snapshot", "comment": comment, "repository": repo}
+            for node in self._graphql_pages(external_id, repo, since_utc, "pullRequests"):
+                if node["updatedAt"] < since_utc:
+                    break
+                pull = {"id": node["databaseId"], "number": node["number"],
+                        "title": node["title"], "body": node.get("body"),
+                        "updated_at": node["updatedAt"], "merged_at": node.get("mergedAt"),
+                        "user": {"id": (node.get("author") or {}).get("databaseId")}}
+                yield {"event": "snapshot", "pull_request": pull, "repository": repo}
+                for review in self._pages(
+                    f"/repos/{owner}/{name}/pulls/{pull['number']}/reviews", external_id
+                ):
+                    if review.get("submitted_at") and review["submitted_at"] >= since_utc:
+                        yield {
+                            "event": "snapshot", "review": review,
+                            "pull_request": pull, "repository": repo,
+                        }
 
     def acl(self, raw: Mapping[str, Any]) -> AccessControl:
         repo = raw["repository"]
@@ -106,12 +178,63 @@ class GitHubConnector:
         return AccessControl("public", ())
 
     def normalize(self, raw: Mapping[str, Any], tenant_id: UUID) -> CanonicalEvent:
+        repo = raw["repository"]
+        actor = raw.get("sender")
+        if "commits" in raw:
+            commits = raw["commits"]
+            head = raw.get("head_commit") or (commits[-1] if commits else {})
+            timestamp = head.get("timestamp") or datetime.now(timezone.utc).isoformat()
+            return CanonicalEvent(
+                tenant_id, f"gh:push:{repo['id']}:{raw['after']}", "github", "push",
+                datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
+                (f"github:user:{actor['id']}",) if actor and actor.get("id") else (),
+                tuple(f"github:commit:{item['id']}" for item in commits) + (f"github:repo:{repo['id']}",),
+                "\n".join(item.get("message", "") for item in commits), self.acl(raw),
+            )
+        if "commit" in raw:
+            item = raw["commit"]
+            author = item.get("author") or actor or {}
+            timestamp = item.get("commit", {}).get("author", {}).get("date") or item.get("timestamp")
+            return CanonicalEvent(
+                tenant_id, f"gh:commit:{item['sha']}", "github", "commit.pushed",
+                datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
+                (f"github:user:{author['id']}",) if author.get("id") else (),
+                (f"github:commit:{item['sha']}", f"github:repo:{repo['id']}"),
+                item.get("commit", {}).get("message") or item.get("message", ""), self.acl(raw),
+            )
+        if "review" in raw:
+            item = raw["review"]
+            author = actor or item.get("user") or {}
+            pull = raw.get("pull_request") or {}
+            return CanonicalEvent(
+                tenant_id, f"gh:review:{item['id']}:{item.get('submitted_at') or item.get('updated_at')}",
+                "github", f"review.{raw.get('action', 'snapshot')}",
+                datetime.fromisoformat((item.get("submitted_at") or item["updated_at"]).replace("Z", "+00:00")),
+                (f"github:user:{author['id']}",) if author.get("id") else (),
+                (f"github:review:{item['id']}", f"github:repo:{repo['id']}") +
+                ((f"github:pr:{pull['id']}",) if pull.get("id") else ()),
+                item.get("body") or "", self.acl(raw),
+            )
+        if "comment" in raw:
+            item = raw["comment"]
+            author = actor or item.get("user") or {}
+            target = raw.get("issue") or raw.get("pull_request") or {}
+            return CanonicalEvent(
+                tenant_id, f"gh:comment:{item['id']}:{item['updated_at']}", "github",
+                f"comment.{raw.get('action', 'snapshot')}",
+                datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")),
+                (f"github:user:{author['id']}",) if author.get("id") else (),
+                (f"github:comment:{item['id']}", f"github:repo:{repo['id']}") +
+                ((f"github:{'pr' if 'pull_request' in target else 'issue'}:{target['id']}",)
+                 if target.get("id") else ()),
+                item.get("body") or "", self.acl(raw),
+            )
         item = raw.get("issue") or raw.get("pull_request")
         if item is None:
             raise ValueError("Expected a GitHub issue or pull request")
         kind = "pr" if "pull_request" in raw or "pull_request" in item else "issue"
         updated = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
-        repository = raw["repository"]
+        repository = repo
         action = raw.get("action", "snapshot")
         if kind == "pr" and action == "closed" and item.get("merged"):
             action = "merged"
@@ -123,11 +246,27 @@ class GitHubConnector:
             source="github",
             type=f"{kind}.{action}",
             occurred_at=updated,
-            actors=(f"github:user:{(raw.get('sender') or item['user'])['id']}",),
+            actors=((f"github:user:{(raw.get('sender') or item.get('user') or {}).get('id')}",)
+                    if (raw.get('sender') or item.get('user') or {}).get('id') else ()),
             objects=(f"github:{kind}:{item['id']}", f"github:repo:{repository['id']}"),
             text=f"{item['title']}\n{item.get('body') or ''}",
             acl=self.acl(raw),
         )
 
     def tools(self) -> tuple[Tool, ...]:
-        return (Tool("github.read_issue", 0),)
+        return (
+            Tool("github.read_issue", 0), Tool("github.create_issue", 2),
+            Tool("github.comment_issue", 2), Tool("github.request_review", 2),
+        )
+
+    def create_issue(self, installation_id: str, owner: str, repo: str, title: str, body: str) -> Any:
+        path = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}/issues"
+        return self._request("POST", path, self._installation_token(installation_id), json={"title": title, "body": body})
+
+    def comment_issue(self, installation_id: str, owner: str, repo: str, number: int, body: str) -> Any:
+        path = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}/issues/{int(number)}/comments"
+        return self._request("POST", path, self._installation_token(installation_id), json={"body": body})
+
+    def request_review(self, installation_id: str, owner: str, repo: str, number: int, reviewers: list[str]) -> Any:
+        path = f"/repos/{quote(owner, safe='')}/{quote(repo, safe='')}/pulls/{int(number)}/requested_reviewers"
+        return self._request("POST", path, self._installation_token(installation_id), json={"reviewers": reviewers})

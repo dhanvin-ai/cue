@@ -17,7 +17,7 @@ The API and backfill job need `DATABASE_URL` for the restricted `cue_app` role. 
 
 - The webhook validates `X-Hub-Signature-256` before publishing. It includes the GitHub delivery ID and installation ID as Pub/Sub attributes. Phase 3 maps an installation to a tenant, stores the raw payload in GCS, deduplicates delivery IDs, and normalizes events.
 - Payloads above 9 MB are rejected before Pub/Sub because of its 10 MB message limit. A future ingress change should store oversized raw payloads directly in GCS and publish a reference; reconciliation must recover missed changes meanwhile.
-- Backfill covers GitHub issues and pull requests through the issues API. Commits, reviews, and comments belong to the deeper GitHub connector work in Phase 4.
+- Phase 4 extends GitHub backfill to commits, reviews, and issue comments, and adds the matching live webhook events. The current backfill still uses REST endpoints rather than the PDF's preferred GraphQL import.
 - A retry may publish the same snapshot again if a run stops after publication but before checkpointing. Phase 3 deduplicates by stable event ID.
 - OAuth token storage and refresh will be added with the Gmail, Calendar, Slack, and tracker connectors that require it. Their token values belong in Secret Manager, while `connector_connections.secret_ref` holds only the secret reference.
 - Webhook event selection is configured on the GitHub App. `subscribe()` verifies that the required events are enabled; it does not change the App registration.

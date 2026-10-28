@@ -8,7 +8,9 @@ import psycopg
 def publish_pending(database_url: str, publisher, topic: str) -> int:
     count = 0
     with psycopg.connect(database_url, autocommit=True) as database:
-        tenants = database.execute("SELECT DISTINCT tenant_id FROM github_installation_map").fetchall()
+        tenants = database.execute(
+            "SELECT tenant_id FROM github_installation_map UNION SELECT tenant_id FROM source_bindings"
+        ).fetchall()
         for (tenant_id,) in tenants:
             with database.transaction():
                 database.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))

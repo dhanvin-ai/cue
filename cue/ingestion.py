@@ -14,11 +14,32 @@ from psycopg.types.json import Jsonb
 
 from cue.connectors.base import AccessControl, CanonicalEvent
 from cue.connectors.github import GitHubConnector
+from cue.connectors.normalize_v1 import normalize as normalize_v1
 
 
 def _routing(database: psycopg.Connection, raw: dict, attributes: dict) -> tuple[UUID, UUID]:
-    if attributes.get("source") != "github":
+    source = attributes.get("source")
+    if source not in {"github", "gmail", "calendar", "slack", "linear", "recall"}:
         raise ValueError("Unsupported raw event source")
+    if source != "github":
+        if "connection_id" in attributes:
+            row = database.execute(
+                "SELECT tenant_id, connection_id FROM source_bindings "
+                "WHERE provider = %s AND connection_id = %s",
+                (source, UUID(attributes["connection_id"])),
+            ).fetchone()
+            if row is None or str(row[0]) != attributes.get("tenant_id"):
+                raise ValueError("Backfill connection does not match tenant")
+        else:
+            external_id = attributes.get("external_id")
+            row = database.execute(
+                "SELECT tenant_id, connection_id FROM source_bindings "
+                "WHERE provider = %s AND external_id = %s",
+                (source, external_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Source identity is not linked to a tenant")
+        return row[0], row[1]
     if "connection_id" in attributes:
         connection_id = UUID(attributes["connection_id"])
         row = database.execute(
@@ -41,6 +62,17 @@ def _routing(database: psycopg.Connection, raw: dict, attributes: dict) -> tuple
 
 
 def _canonical(raw: dict, attributes: dict, tenant_id: UUID) -> CanonicalEvent:
+    source = attributes["source"]
+    if source != "github":
+        event = normalize_v1(source, raw, tenant_id)
+        if "connection_id" in attributes:
+            if event.event_id != attributes.get("event_id"):
+                raise ValueError("Backfill event ID does not match payload")
+            return event
+        delivery_id = attributes.get("delivery_id")
+        if not delivery_id:
+            raise ValueError("Webhook delivery ID is required")
+        return replace(event, event_id=f"{source}:delivery:{delivery_id}")
     if "connection_id" in attributes:
         event = GitHubConnector().normalize(raw, tenant_id)
         if event.event_id != attributes.get("event_id"):
@@ -61,7 +93,10 @@ def _canonical(raw: dict, attributes: dict, tenant_id: UUID) -> CanonicalEvent:
             text="",
             acl=AccessControl("restricted", ("cue:admins",)),
         )
-    if attributes.get("event") not in {"issues", "pull_request"}:
+    if attributes.get("event") not in {
+        "issues", "pull_request", "push", "issue_comment",
+        "pull_request_review", "pull_request_review_comment",
+    }:
         raise ValueError("Unsupported GitHub webhook event")
     return replace(
         GitHubConnector().normalize(raw, tenant_id),
@@ -103,7 +138,7 @@ def process_raw(data: bytes, attributes: dict, database_url: str, storage_client
         tenant_id, _ = _routing(database, raw, attributes)
         event = _canonical(raw, attributes, tenant_id)
         bucket = os.environ["RAW_GCS_BUCKET"]
-        key = f"raw/{tenant_id}/github/{hashlib.sha256(data).hexdigest()}.json"
+        key = f"raw/{tenant_id}/{attributes['source']}/{hashlib.sha256(data).hexdigest()}.json"
         client = storage_client or storage.Client()
         try:
             client.bucket(bucket).blob(key).upload_from_string(

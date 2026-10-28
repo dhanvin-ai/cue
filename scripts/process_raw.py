@@ -2,11 +2,32 @@
 
 import logging
 import os
+import json
+
+import psycopg
 
 from google.api_core.exceptions import DeadlineExceeded
 from google.cloud import pubsub_v1
 
 from cue.ingestion import process_raw
+from cue.connectors.backfill import run
+
+
+def sync_finished_transcript(data: bytes, attributes: dict) -> None:
+    if attributes.get("source") != "recall":
+        return
+    event = json.loads(data)
+    if event.get("event") != "transcript.done":
+        return
+    bot_id = attributes["external_id"]
+    with psycopg.connect(os.environ["INGEST_DATABASE_URL"]) as database:
+        row = database.execute(
+            "SELECT tenant_id, connection_id FROM source_bindings "
+            "WHERE provider = 'recall' AND external_id = %s", (bot_id,)
+        ).fetchone()
+    if row is None:
+        raise ValueError("Recall bot is not bound")
+    run(*row)
 
 
 def main() -> None:
@@ -28,6 +49,7 @@ def main() -> None:
                     dict(received.message.attributes),
                     os.environ["INGEST_DATABASE_URL"],
                 )
+                sync_finished_transcript(received.message.data, dict(received.message.attributes))
                 subscriber.acknowledge(request={"subscription": subscription, "ack_ids": [received.ack_id]})
                 logging.info("Processed raw message %s: new=%s", received.message.message_id, inserted)
             except Exception:

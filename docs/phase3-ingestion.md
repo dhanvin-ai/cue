@@ -1,6 +1,6 @@
 # Phase 3: canonical ingestion and replay
 
-This implements the PDF's Pub/Sub → GCS raw archive → normalized event → entity resolution → fan-out path for the first GitHub connector. The fan-out topic is the handoff to graph, vector, structured and summarizer consumers in the next memory phase; those stores are not yet populated.
+This implements the PDF's Pub/Sub → GCS raw archive → normalized event → entity resolution → fan-out path. Phase 4 adds Gmail, Calendar, Slack, Linear, and Recall to the original GitHub path. The fan-out topic is the handoff to graph, vector, structured and summarizer consumers in the next memory phase; those stores are not yet populated.
 
 ## Deploy
 
@@ -11,7 +11,7 @@ This implements the PDF's Pub/Sub → GCS raw archive → normalized event → e
 
 The raw worker acknowledges a message only after the GCS write and Postgres transaction commit. It rejects a backfill tenant/connection mismatch and resolves webhooks from their verified installation binding. A stable event ID deduplicates retries. Event and pending outbox rows commit together. The outbox publisher marks a row sent only after Pub/Sub confirms publication. A crash between publication and marking can publish a duplicate; consumers must deduplicate on `(tenant_id, event_id)`.
 
-Entity aliases map GitHub users, repositories, issues and PRs to canonical UUIDs. Cross-vendor person/project merging needs verified identifiers from the later Slack, Workspace and tracker connectors; this phase does not guess that two accounts are the same person. Source ACLs are retained in each canonical payload for permission-aware consumers.
+Entity aliases map vendor identities and objects to canonical UUIDs. Cross-vendor person/project merging still needs verified identity evidence; this phase does not guess that two accounts are the same person. Source ACLs are retained in each canonical payload for permission-aware consumers.
 
 ## Replay and operations
 

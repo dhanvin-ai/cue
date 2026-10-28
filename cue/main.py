@@ -1,5 +1,8 @@
 import os
 import json
+import hashlib
+import hmac
+from urllib.parse import parse_qs
 from uuid import UUID
 
 import firebase_admin
@@ -18,6 +21,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from google.cloud import pubsub_v1
 
 from cue.connectors.github import REQUIRED_EVENTS, secret, verify_webhook
+from cue.connectors import signatures
 
 app = FastAPI(title="Cue API")
 bearer = HTTPBearer(auto_error=False)
@@ -84,6 +88,88 @@ async def github_webhook(request: Request) -> dict[str, bool]:
         ).result(timeout=5)
 
     await run_in_threadpool(publish)
+    return {"accepted": True}
+
+
+def publish_raw(body: bytes, source: str, external_id: str, delivery_id: str) -> None:
+    pubsub_v1.PublisherClient().publish(
+        os.environ["RAW_EVENTS_TOPIC"], body,
+        source=source, external_id=external_id, delivery_id=delivery_id,
+    ).result(timeout=5)
+
+
+@app.post("/webhooks/slack")
+async def slack_webhook(request: Request) -> dict:
+    body = await request.body()
+    if len(body) > 9_000_000:
+        raise HTTPException(status_code=413)
+    key = await run_in_threadpool(secret, os.environ["SLACK_SIGNING_SECRET_VERSION"])
+    if not signatures.slack(body, request.headers, key):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    payload = json.loads(body)
+    if payload.get("type") == "url_verification":
+        return {"challenge": payload["challenge"]}
+    event = payload.get("event", {})
+    if payload.get("type") != "event_callback" or event.get("type") != "message" or event.get("subtype") not in (None, "message_changed"):
+        return {"accepted": False}
+    await run_in_threadpool(publish_raw, body, "slack", payload["team_id"], payload["event_id"])
+    return {"accepted": True}
+
+
+@app.post("/webhooks/linear", status_code=202)
+async def linear_webhook(request: Request) -> dict[str, bool]:
+    body = await request.body()
+    if len(body) > 9_000_000:
+        raise HTTPException(status_code=413)
+    key = await run_in_threadpool(secret, os.environ["LINEAR_WEBHOOK_SECRET_VERSION"])
+    if not signatures.linear(body, request.headers, key):
+        raise HTTPException(status_code=401, detail="Invalid Linear signature")
+    payload = json.loads(body)
+    if payload.get("type") != "Issue":
+        return {"accepted": False}
+    await run_in_threadpool(
+        publish_raw, body, "linear", payload["organizationId"], hashlib.sha256(body).hexdigest()
+    )
+    return {"accepted": True}
+
+
+@app.post("/webhooks/recall", status_code=202)
+async def recall_webhook(request: Request) -> dict[str, bool]:
+    body = await request.body()
+    if len(body) > 9_000_000:
+        raise HTTPException(status_code=413)
+    key = await run_in_threadpool(secret, os.environ["RECALL_VERIFICATION_SECRET_VERSION"])
+    if not signatures.recall(body, request.headers, key):
+        raise HTTPException(status_code=401, detail="Invalid Recall signature")
+    payload = json.loads(body)
+    data = payload.get("data", {})
+    bot_id = (data.get("bot") or {}).get("id") or data.get("bot_id")
+    if not bot_id:
+        raise HTTPException(status_code=400, detail="Missing bot ID")
+    delivery_id = request.headers.get("webhook-id") or request.headers.get("svix-id")
+    await run_in_threadpool(publish_raw, body, "recall", bot_id, delivery_id)
+    return {"accepted": True}
+
+
+@app.post("/webhooks/calendar", status_code=202)
+async def calendar_webhook(request: Request) -> dict[str, bool]:
+    params = parse_qs(request.headers.get("X-Goog-Channel-Token", ""))
+    owner = params.get("owner", [""])[0]
+    signature = params.get("signature", [""])[0]
+    if not owner or not signature:
+        raise HTTPException(status_code=401)
+    key = await run_in_threadpool(secret, os.environ["CALENDAR_CHANNEL_SECRET_VERSION"])
+    expected = hmac.new(key, owner.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401)
+    if request.headers.get("X-Goog-Resource-State") == "sync":
+        return {"accepted": False}
+    external_id = owner
+    def publish_trigger() -> None:
+        pubsub_v1.PublisherClient().publish(
+            os.environ["SYNC_TRIGGERS_TOPIC"], b"", provider="calendar", external_id=external_id
+        ).result(timeout=5)
+    await run_in_threadpool(publish_trigger)
     return {"accepted": True}
 
 
