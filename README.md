@@ -6,6 +6,8 @@ The product concept is an agent with its own team identity that can answer quest
 
 This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), the [Phase 6 agent runtime](docs/phase6.md), and a [license decision guide](docs/licensing.md).
 
+Before Phase 6, [Playwright API end-to-end tests](docs/e2e-testing.md) exercise the backend over HTTP with real Postgres and Qdrant services in CI.
+
 ## Planned system areas
 
 - Connectors and an event pipeline for team tools
