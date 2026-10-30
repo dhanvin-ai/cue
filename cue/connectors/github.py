@@ -9,7 +9,7 @@ from uuid import UUID
 
 import httpx
 import jwt
-from google.cloud import secretmanager
+from cue.connectors import secret_store
 
 from cue.connectors.base import AccessControl, CanonicalEvent, Tool
 
@@ -47,7 +47,7 @@ REQUIRED_EVENTS = {
 
 
 def secret(ref: str) -> bytes:
-    return secretmanager.SecretManagerServiceClient().access_secret_version(name=ref).payload.data
+    return secret_store.read(ref)
 
 
 def verify_webhook(body: bytes, signature: str | None, key: bytes) -> bool:

@@ -34,6 +34,8 @@ def _source_url(raw: dict, source: str) -> str | None:
         return f"https://mail.google.com/mail/u/0/#all/{thread}" if thread else None
     if source == "calendar":
         return (raw.get("event") or {}).get("htmlLink")
+    if source == "calendly":
+        return ((raw.get("event") or {}).get("location") or {}).get("join_url")
     if source == "linear":
         return (raw.get("data") or {}).get("url")
     if source == "slack":
@@ -45,7 +47,7 @@ def _source_url(raw: dict, source: str) -> str | None:
 
 def _routing(database: psycopg.Connection, raw: dict, attributes: dict) -> tuple[UUID, UUID]:
     source = attributes.get("source")
-    if source not in {"github", "gmail", "calendar", "slack", "linear", "recall"}:
+    if source not in {"github", "gmail", "calendar", "calendly", "slack", "linear", "recall"}:
         raise ValueError("Unsupported raw event source")
     if source != "github":
         if "connection_id" in attributes:

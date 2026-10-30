@@ -1,5 +1,6 @@
 import os
 
+from cue.connectors.calendly import CalendlyConnector
 from cue.connectors.calendar import CalendarConnector
 from cue.connectors.credentials import Credential
 from cue.connectors.github import GitHubConnector
@@ -19,6 +20,8 @@ def make_connector(provider: str, external_id: str, secret_ref: str | None):
         return GmailConnector(credential)
     if provider == "calendar":
         return CalendarConnector(credential, external_id)
+    if provider == "calendly":
+        return CalendlyConnector(credential)
     if provider == "slack":
         return SlackConnector(credential)
     if provider == "linear":

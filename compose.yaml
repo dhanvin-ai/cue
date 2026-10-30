@@ -15,6 +15,17 @@ services:
       - "6333:6333"
     volumes:
       - cue_qdrant:/qdrant/storage
+  # Local stand-ins for GCP. Set PUBSUB_EMULATOR_HOST and STORAGE_EMULATOR_HOST to use them.
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 --project=cue-local
+    ports:
+      - "8085:8085"
+  gcs:
+    image: fsouza/fake-gcs-server:1.52.2
+    command: -scheme http -port 4443 -public-host localhost:4443
+    ports:
+      - "4443:4443"
 
 volumes:
   cue_postgres:

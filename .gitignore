@@ -10,3 +10,4 @@ snapshots/
 .qdrant-initialized
 
 .exvisit/
+.secrets/

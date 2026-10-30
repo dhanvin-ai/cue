@@ -36,6 +36,22 @@ def normalize(source: str, raw: Mapping[str, Any], tenant_id: UUID) -> Canonical
             f"{item.get('summary', '')}\n{item.get('description', '')}",
             AccessControl("restricted", tuple(f"email:owner:{a}" for a in sorted(attendees))),
         )
+    if source == "calendly":
+        item, owner = raw["event"], raw["owner"]
+        emails = {i["email"].casefold() for i in raw.get("invitees", []) if i.get("email")}
+        names = ", ".join(i.get("name") or i.get("email") or "" for i in raw.get("invitees", []))
+        event_id = item["uri"].rsplit("/", 1)[-1]
+        join_url = (item.get("location") or {}).get("join_url")
+        return CanonicalEvent(
+            tenant_id, f"calendly:{owner}:{event_id}:{item.get('updated_at', '')}", source,
+            f"calendly.{item.get('status', 'active')}", _time(item.get("updated_at") or item.get("created_at")),
+            tuple(f"gmail:person:{email}" for email in sorted(emails)),
+            (f"calendly:event:{event_id}",),
+            f"{item.get('name', '')} with {names} at {item.get('start_time', '')}",
+            AccessControl("restricted", tuple(f"email:owner:{e}" for e in sorted(emails | {owner}))),
+            {"start_time": item.get("start_time"), "end_time": item.get("end_time"),
+             "status": item.get("status"), "join_url": join_url},
+        )
     if source == "slack":
         item = raw["event"]
         if item.get("subtype") == "message_changed":

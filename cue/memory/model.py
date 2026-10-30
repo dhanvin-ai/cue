@@ -67,7 +67,7 @@ class SmallModel:
         if period and period not in PERIODS:
             raise ValueError("Model returned an unsupported summary period")
         source = raw.get("source")
-        if source and source not in {"github", "gmail", "calendar", "slack", "linear", "recall"}:
+        if source and source not in {"github", "gmail", "calendar", "calendly", "slack", "linear", "recall"}:
             raise ValueError("Model returned an unsupported source")
         relation = raw.get("relation")
         if relation and relation not in {"owned_by", "worked_on"}:

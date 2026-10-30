@@ -1,10 +1,10 @@
-"""OAuth credentials live only in Secret Manager; refreshed versions replace `latest`."""
+"""OAuth credentials live in Secret Manager (or a local file store); refreshes replace `latest`."""
 
 import json
 import time
 
 import httpx
-from google.cloud import secretmanager
+from cue.connectors import secret_store
 
 
 class Credential:
@@ -14,7 +14,7 @@ class Credential:
         self.ref = ref
         self.provider = provider
         self.client = client or httpx.Client(timeout=15)
-        self.store = store or secretmanager.SecretManagerServiceClient()
+        self.store = store or secret_store.store_for(ref)
 
     def token(self) -> str:
         data = json.loads(self.store.access_secret_version(name=self.ref).payload.data)
