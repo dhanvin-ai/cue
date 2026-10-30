@@ -249,3 +249,11 @@ def live_meeting_by_bot_prefix(database: psycopg.Connection, tenant_id: UUID,
         (tenant_id, prefix + "%"),
     ).fetchone()
     return None if row is None else get_meeting(database, tenant_id, row[0])
+
+
+def live_meeting_by_bot(database: psycopg.Connection, tenant_id: UUID, bot_id: str) -> dict | None:
+    row = database.execute(
+        "SELECT id FROM meeting_sessions WHERE tenant_id = %s AND status = 'live' AND bot_id = %s",
+        (tenant_id, bot_id),
+    ).fetchone()
+    return None if row is None else get_meeting(database, tenant_id, row[0])

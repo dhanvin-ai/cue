@@ -9,7 +9,7 @@ from uuid import UUID
 
 import firebase_admin
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
@@ -29,7 +29,7 @@ from cue.connectors import signatures
 from cue.audit import report as audit_report
 from cue.controls import switches
 from cue.lifecycle import propagation
-from cue.meetings import bolna
+from cue.meetings import attendee, bolna
 from cue.meetings import notes as meeting_notes
 from cue.meetings import service as meeting_service
 from cue.memory.query import query_memory
@@ -222,6 +222,23 @@ async def recall_webhook(request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=400, detail="Missing bot ID")
     delivery_id = request.headers.get("webhook-id") or request.headers.get("svix-id")
     await run_in_threadpool(publish_raw, body, "recall", bot_id, delivery_id)
+    return {"accepted": True}
+
+
+@app.post("/webhooks/attendee/{tenant_id}", status_code=202)
+async def attendee_webhook(tenant_id: UUID, request: Request,
+                           background: BackgroundTasks) -> dict[str, bool]:
+    body = await request.body()
+    if len(body) > 1_000_000:
+        raise HTTPException(status_code=413)
+    payload = json.loads(body)
+    key = await run_in_threadpool(secret, os.environ["ATTENDEE_WEBHOOK_SECRET_VERSION"])
+    if not attendee.verify(payload, request.headers.get("X-Webhook-Signature"), key):
+        raise HTTPException(status_code=401, detail="Invalid Attendee signature")
+    # Answer the webhook at once; the turn runs after so Attendee never retries a slow reply.
+    background.add_task(
+        attendee.handle_event, tenant_id, payload, bot=attendee.attendee_bot(tenant_id),
+        gateway=LiteLLMGateway(), registry=lambda uid: agent_tools.build_registry(tenant_id, uid))
     return {"accepted": True}
 
 
@@ -470,20 +487,22 @@ class MeetingJoinBody(BaseModel):
     meeting_url: str = Field(min_length=1, max_length=2000)
     title: str | None = None
     attendees: list[MeetingAttendee] = Field(default_factory=list, max_length=100)
-    # "bolna": the meeting phones Cue's Bolna number instead of a Recall bot joining.
-    voice: str = Field(default="recall", pattern="^(recall|bolna)$")
+    # "attendee": a self-hosted bot joins as a named participant.
+    # "bolna": the meeting phones Cue's Bolna number instead of a bot joining.
+    voice: str = Field(default="attendee", pattern="^(attendee|recall|bolna)$")
 
 
 @app.post("/v1/tenants/{tenant_id}/meetings", status_code=202)
 async def meeting_join(tenant_id: UUID, body: MeetingJoinBody,
                        uid: str = Depends(firebase_uid)) -> dict:
-    bot = bolna.BolnaMeetingBot() if body.voice == "bolna" else None
+    bot = {"bolna": bolna.BolnaMeetingBot, "attendee": lambda: attendee.attendee_bot(tenant_id),
+           "recall": lambda: None}[body.voice]()
     try:
         result = await run_in_threadpool(
             meeting_service.join_meeting, tenant_id, uid, body.meeting_url,
             [item.model_dump() for item in body.attendees], title=body.title, bot=bot,
         )
-        if bot is not None:
+        if body.voice == "bolna":
             result["dial"] = os.getenv("BOLNA_PHONE_NUMBER")
         return result
     except PermissionError as exc:
