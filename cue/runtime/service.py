@@ -1,5 +1,7 @@
 """Task state machine: context, plan, policy-gated tools, reply, retries, approvals."""
 
+import json
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from cue.runtime import context as context_builder
@@ -13,15 +15,34 @@ class TaskNotFound(LookupError):
     pass
 
 
-def snapshot(task: dict, approvals: list[tuple] = ()) -> dict:
+def _iso(value) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _arguments(value):
+    # psycopg returns JSONB columns as dicts; a raw driver may hand back text.
+    return json.loads(value) if isinstance(value, str) else (value or {})
+
+
+def snapshot(task: dict, approvals: Sequence[tuple] = ()) -> dict:
+    plan = task.get("plan")
+    if isinstance(plan, str):
+        plan = json.loads(plan)
     return {
         "task_id": str(task["id"]),
         "source": task["source"],
         "status": task["status"],
+        "request_text": task.get("request_text"),
         "answer": task["answer"],
+        "error": task["error"],
         "attempts": task["attempts"],
+        "created_at": _iso(task.get("created_at")),
+        "updated_at": _iso(task.get("updated_at")),
+        "dispatched_at": _iso(task.get("dispatched_at")),
+        "plan": plan,
         "approvals": [
-            {"id": str(row[0]), "tool": row[1], "tier": row[2], "status": row[3]}
+            {"id": str(row[0]), "tool": row[1], "tier": row[2], "status": row[3],
+             "arguments": _arguments(row[4])}
             for row in approvals
         ],
     }

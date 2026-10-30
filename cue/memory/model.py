@@ -33,6 +33,8 @@ class SmallModel:
         headers = {}
         if ref := os.getenv("MODEL_GATEWAY_API_KEY_SECRET_VERSION"):
             headers["Authorization"] = "Bearer " + secret(ref).decode()
+        elif key := os.getenv("MODEL_GATEWAY_API_KEY"):
+            headers["Authorization"] = "Bearer " + key
         body = {"model": os.environ["MEMORY_SMALL_MODEL"], "temperature": 0,
                 "messages": [{"role": "system", "content": instruction},
                              {"role": "user", "content": content}]}

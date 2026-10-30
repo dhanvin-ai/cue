@@ -53,6 +53,27 @@ def set_enabled(database: psycopg.Connection, tenant_id: UUID, rule_key: str,
         raise LookupError("Proactive rule not found")
 
 
+def all_rules(database: psycopg.Connection, tenant_id: UUID) -> list[dict]:
+    """Every rule in the tenant, disabled ones included, for the admin view."""
+    rows = database.execute(
+        "SELECT id, rule_key, kind, schedule, timezone, owner_uid, config, next_run_at, "
+        "enabled, last_run_at FROM proactive_rules WHERE tenant_id = %s "
+        "ORDER BY rule_key", (tenant_id,),
+    ).fetchall()
+    keys = ("id", "rule_key", "kind", "schedule", "timezone", "owner_uid", "config",
+            "next_run_at", "enabled", "last_run_at")
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def mutes(database: psycopg.Connection, tenant_id: UUID) -> list[dict]:
+    rows = database.execute(
+        "SELECT firebase_uid, rule_key, created_at FROM proactive_mutes "
+        "WHERE tenant_id = %s ORDER BY created_at DESC", (tenant_id,),
+    ).fetchall()
+    keys = ("firebase_uid", "rule_key", "created_at")
+    return [dict(zip(keys, row)) for row in rows]
+
+
 def mute(database: psycopg.Connection, tenant_id: UUID, uid: str, rule_key: str = "*") -> None:
     if store.membership(database, tenant_id, uid) is None:
         raise PermissionError("Not a member of this tenant")

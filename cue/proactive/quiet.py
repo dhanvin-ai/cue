@@ -74,6 +74,15 @@ def set_window(database: psycopg.Connection, tenant_id, *, scope: str, subject: 
     return window
 
 
+def list_windows(database: psycopg.Connection, tenant_id) -> list[dict]:
+    rows = database.execute(
+        "SELECT scope, subject, timezone, start_time, end_time FROM quiet_hours "
+        "WHERE tenant_id = %s ORDER BY scope, subject", (tenant_id,),
+    ).fetchall()
+    keys = ("scope", "subject", "timezone", "start_time", "end_time")
+    return [dict(zip(keys, row)) for row in rows]
+
+
 def deferral(database: psycopg.Connection, tenant_id, uid: str | None,
              moment: datetime) -> datetime | None:
     """Return the release time when proactive delivery must be deferred."""

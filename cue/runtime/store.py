@@ -11,7 +11,7 @@ import psycopg
 
 TASK_COLUMNS = (
     "id, source, requester_uid, channel_ref, thread_ref, request_text, status, plan, answer, "
-    "error, attempts, max_attempts, run_at, recurrence, created_at"
+    "error, attempts, max_attempts, run_at, recurrence, created_at, updated_at, dispatched_at"
 )
 
 
@@ -191,3 +191,47 @@ def due_tasks(database: psycopg.Connection, now: datetime, limit: int = 20) -> l
         (now, limit),
     ).fetchall()
     return [row[0] for row in rows]
+
+
+def list_tasks(database: psycopg.Connection, tenant_id: UUID, *, limit: int = 25,
+               status: str | None = None) -> list[dict]:
+    """Most recent tasks for this tenant, newest first."""
+    filters = ["tenant_id = %s"]
+    values: list = [tenant_id]
+    if status:
+        filters.append("status = %s")
+        values.append(status)
+    values.append(limit)
+    rows = database.execute(
+        f"SELECT {TASK_COLUMNS} FROM agent_tasks WHERE {' AND '.join(filters)} "
+        "ORDER BY created_at DESC, id DESC LIMIT %s", values,
+    ).fetchall()
+    keys = [name.strip() for name in TASK_COLUMNS.split(",")]
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def requeue_task(database: psycopg.Connection, tenant_id: UUID, task_id: UUID) -> bool:
+    """Release a queued task that was dispatched but never executed.
+
+    Cloud Tasks delivery can be lost; without this the row keeps its
+    dispatched_at stamp and no scheduler tick will ever offer it again.
+    """
+    changed = database.execute(
+        "UPDATE agent_tasks SET dispatched_at = NULL, updated_at = now() "
+        "WHERE tenant_id = %s AND id = %s AND status = 'queued' RETURNING id",
+        (tenant_id, task_id),
+    ).rowcount
+    return bool(changed)
+
+
+def pending_approvals(database: psycopg.Connection, tenant_id: UUID,
+                     limit: int = 50) -> list[tuple]:
+    """Pending approvals with the task each one belongs to."""
+    return database.execute(
+        "SELECT a.id, a.tool, a.tier, a.status, a.arguments, a.task_id, t.request_text, "
+        "t.source, t.status, a.created_at "
+        "FROM agent_approvals AS a JOIN agent_tasks AS t ON t.tenant_id = a.tenant_id "
+        "AND t.id = a.task_id WHERE a.tenant_id = %s AND a.status = 'pending' "
+        "ORDER BY a.created_at DESC LIMIT %s",
+        (tenant_id, limit),
+    ).fetchall()

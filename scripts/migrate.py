@@ -4,10 +4,13 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 
+from _local_env import load_local_env
+
 root = Path(__file__).resolve().parents[1]
 
 
 def main() -> None:
+    load_local_env()
     with psycopg.connect(os.environ["MIGRATION_DATABASE_URL"]) as connection:
         with connection.cursor() as cursor:
             for role, password in (

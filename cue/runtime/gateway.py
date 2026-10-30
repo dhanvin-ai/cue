@@ -44,6 +44,9 @@ class LiteLLMGateway:
     def _headers(self) -> dict[str, str]:
         if ref := os.getenv("MODEL_GATEWAY_API_KEY_SECRET_VERSION"):
             return {"Authorization": "Bearer " + secret(ref).decode()}
+        # Local development only; deployed services read the key from Secret Manager.
+        if key := os.getenv("MODEL_GATEWAY_API_KEY"):
+            return {"Authorization": "Bearer " + key}
         return {}
 
     def complete(self, messages: list[dict], *, model_class: str = "planner") -> Completion:

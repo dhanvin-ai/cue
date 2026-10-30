@@ -7,6 +7,8 @@ from datetime import date
 import psycopg
 from psycopg import sql
 
+from _local_env import load_local_env
+
 
 def month_offset(today: date, offset: int) -> date:
     month = today.year * 12 + today.month - 1 + offset
@@ -14,6 +16,7 @@ def month_offset(today: date, offset: int) -> date:
 
 
 def main() -> None:
+    load_local_env()
     parser = argparse.ArgumentParser()
     parser.add_argument("--months-back", type=int, default=12)
     args = parser.parse_args()
