@@ -238,3 +238,14 @@ def queue_deliveries(database: psycopg.Connection, tenant_id: UUID, note_id: UUI
             "VALUES (%s, %s, 'email', %s, %s) ON CONFLICT DO NOTHING",
             (tenant_id, note_id, email, Jsonb(payload)),
         )
+
+
+def live_meeting_by_bot_prefix(database: psycopg.Connection, tenant_id: UUID,
+                               prefix: str) -> dict | None:
+    """Most recent live meeting whose bot ID carries the given provider prefix."""
+    row = database.execute(
+        "SELECT id FROM meeting_sessions WHERE tenant_id = %s AND status = 'live' "
+        "AND bot_id LIKE %s ORDER BY started_at DESC NULLS LAST LIMIT 1",
+        (tenant_id, prefix + "%"),
+    ).fetchone()
+    return None if row is None else get_meeting(database, tenant_id, row[0])

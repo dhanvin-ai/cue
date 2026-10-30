@@ -4,7 +4,7 @@ Cue is an AI teammate for software teams, being developed for the Bolna AI Build
 
 The product concept is an agent with its own team identity that can answer questions about work, participate in meetings when addressed, track decisions and action items, and carry out approved actions across tools. The first planned integrations are Google Workspace, Slack, GitHub, meetings, and a project tracker.
 
-This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), the [Phase 6 agent runtime](docs/phase6.md), the [Phase 7 meeting voice](docs/phase7.md), the [Phase 8 proactive and pilot controls](docs/phase8.md), and a [license decision guide](docs/licensing.md).
+This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), the [Phase 6 agent runtime](docs/phase6.md), the [Phase 7 meeting voice](docs/phase7.md), the [Phase 8 proactive and pilot controls](docs/phase8.md), a browser console for testing it all at [`GET /ui`](docs/frontend.md), and a [license decision guide](docs/licensing.md).
 
 Before Phase 6, [Playwright API end-to-end tests](docs/e2e-testing.md) exercise the backend over HTTP with real Postgres and Qdrant services in CI.
 
@@ -14,7 +14,7 @@ Before Phase 6, [Playwright API end-to-end tests](docs/e2e-testing.md) exercise 
 - Permission aware memory and retrieval
 - A shared agent runtime with approval controls
 - Meeting voice and follow up workflows
-- A web interface for chat, tasks, approvals, and audit history
+- A web interface for chat, tasks, approvals, and audit history — a working console ships today; see [frontend](docs/frontend.md)
 
 ## Licensing status
 
@@ -64,7 +64,7 @@ Slack, email, and web requests enter one runtime that builds ACL-filtered contex
 
 ## Phase 7 meeting voice
 
-The Recall meeting bot joins calls, diarized speakers map to tenant members, and Cue answers only when addressed. Responses stream through TTS with interruption handling. After the meeting, transcript-backed summaries, decisions, and action items are published under the attendee ACL; tool actions go through the Phase 6 approval flow. See [meeting voice setup](docs/phase7.md).
+The Recall meeting bot joins calls, diarized speakers map to tenant members, and Cue answers only when addressed. Responses stream through TTS with interruption handling. After the meeting, transcript-backed summaries, decisions, and action items are published under the attendee ACL; tool actions go through the Phase 6 approval flow. See [meeting voice setup](docs/phase7.md). Live meeting voice runs on [Bolna](docs/bolna.md): the meeting phones Cue's Bolna number, and Bolna calls Cue as its LLM for every turn.
 
 ## Phase 8 proactive and pilot controls
 

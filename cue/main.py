@@ -3,12 +3,14 @@ import json
 import hashlib
 import hmac
 from datetime import datetime, time
+from pathlib import Path
 from urllib.parse import parse_qs
 from uuid import UUID
 
 import firebase_admin
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
 from firebase_admin import auth
@@ -27,6 +29,7 @@ from cue.connectors import signatures
 from cue.audit import report as audit_report
 from cue.controls import switches
 from cue.lifecycle import propagation
+from cue.meetings import bolna
 from cue.meetings import notes as meeting_notes
 from cue.meetings import service as meeting_service
 from cue.memory.query import query_memory
@@ -48,7 +51,15 @@ if os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
 FastAPIInstrumentor.instrument_app(app)
 
 
+DEV_TENANT_ENV = "CUE_DEV_TENANT_ID"
+
+
 def firebase_uid(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> str:
+    # Local development only: CUE_DEV_AUTH_UID skips Firebase verification so the
+    # dev console and curl work without a Firebase project. Never set it in a
+    # deployed environment.
+    if dev_uid := os.getenv("CUE_DEV_AUTH_UID"):
+        return dev_uid
     if credentials is None:
         raise HTTPException(status_code=401, detail="Bearer token required")
     try:
@@ -77,6 +88,41 @@ def readyz() -> dict:
         checks["postgres"] = type(exc).__name__
     status = "ok" if all(value == "ok" for value in checks.values()) else "degraded"
     return {"status": status, "checks": checks}
+
+
+CONSOLE_HTML = Path(__file__).parent / "static" / "console.html"
+CONSOLE_JS = Path(__file__).parent / "static" / "console.js"
+
+
+def console_enabled() -> bool:
+    # Local development only: the console relies on the dev auth bypass, so it is
+    # never served when that bypass is off.
+    return bool(os.getenv("CUE_DEV_AUTH_UID"))
+
+
+@app.get("/ui", include_in_schema=False)
+def dev_console() -> HTMLResponse:
+    """The teammate console. Available only while the dev auth bypass is on."""
+    if not console_enabled():
+        raise HTTPException(status_code=404)
+    html = CONSOLE_HTML.read_text(encoding="utf-8")
+    return HTMLResponse(html)
+
+
+@app.get("/ui/console.js", include_in_schema=False)
+def dev_console_script() -> Response:
+    if not console_enabled():
+        raise HTTPException(status_code=404)
+    # The page and this script are same-origin, so no CORS is needed for either.
+    body = (
+        f"window.__CUE_TENANT__={json.dumps(os.getenv(DEV_TENANT_ENV, ''))};\n"
+        f"window.__CUE_UID__={json.dumps(os.getenv('CUE_DEV_AUTH_UID', ''))};\n"
+        f"window.__CUE_GATEWAY_URL__={json.dumps(os.getenv('MODEL_GATEWAY_BASE_URL', ''))};\n"
+        # Only whether a key exists is exposed; the key itself never leaves the server.
+        f"window.__CUE_GATEWAY_KEY__={json.dumps(bool(os.getenv('MODEL_GATEWAY_API_KEY')))};\n"
+        + CONSOLE_JS.read_text(encoding="utf-8")
+    )
+    return Response(body, media_type="application/javascript")
 
 
 @app.post("/webhooks/github", status_code=202)
@@ -272,6 +318,60 @@ def agent_task(tenant_id: UUID, task_id: UUID, uid: str = Depends(firebase_uid))
     return agent_service.snapshot(task, approvals)
 
 
+@app.get("/v1/tenants/{tenant_id}/agent/tasks")
+def agent_tasks(tenant_id: UUID, uid: str = Depends(firebase_uid),
+                status_filter: str | None = Query(default=None, alias="status", max_length=30),
+                limit: int = Query(default=25, ge=1, le=100)) -> dict:
+    """Recent tasks with their approvals, newest first."""
+    with agent_store.tenant_connection(tenant_id) as database:
+        if agent_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        tasks = agent_store.list_tasks(database, tenant_id, limit=limit,
+                                       status=status_filter)
+        snapshots = []
+        for task in tasks:
+            approvals = agent_store.task_approvals(
+                database, tenant_id, task["id"])
+            snapshots.append(agent_service.snapshot(task, approvals))
+    return {"tasks": snapshots}
+
+
+@app.get("/v1/tenants/{tenant_id}/agent/approvals")
+def agent_approvals(tenant_id: UUID, uid: str = Depends(firebase_uid),
+                    limit: int = Query(default=50, ge=1, le=200)) -> dict:
+    """Pending approvals across every task, so one person can clear the queue."""
+    with agent_store.tenant_connection(tenant_id) as database:
+        if agent_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        rows = agent_store.pending_approvals(database, tenant_id, limit=limit)
+    return {"approvals": [
+        {"id": str(row[0]), "tool": row[1], "tier": row[2], "status": row[3],
+         "arguments": row[4] or {}, "task_id": str(row[5]), "request_text": row[6],
+         "source": row[7], "task_status": row[8],
+         "created_at": row[9].isoformat() if row[9] else None}
+        for row in rows
+    ]}
+
+
+@app.post("/v1/tenants/{tenant_id}/agent/tasks/{task_id}/requeue", status_code=202)
+async def agent_task_requeue(tenant_id: UUID, task_id: UUID,
+                             uid: str = Depends(firebase_uid)) -> dict:
+    """Retry a queued task whose dispatch was lost before any worker ran it."""
+    with agent_store.tenant_connection(tenant_id) as database:
+        if agent_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        task = agent_store.get_task(database, tenant_id, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task["status"] != "queued":
+            raise HTTPException(status_code=409,
+                                detail=f"Task is {task['status']}, not queued")
+        released = agent_store.requeue_task(database, tenant_id, task_id)
+        agent_store.audit(database, tenant_id, actor=uid, action="retry", task_id=task_id,
+                          decision="requeued", detail={"attempts": task["attempts"]})
+    return {"task_id": str(task_id), "requeued": released}
+
+
 @app.post("/v1/tenants/{tenant_id}/agent/approvals/{approval_id}")
 async def agent_approval(tenant_id: UUID, approval_id: UUID, body: ApprovalBody,
                          uid: str = Depends(firebase_uid)) -> dict:
@@ -364,20 +464,53 @@ class MeetingJoinBody(BaseModel):
     meeting_url: str = Field(min_length=1, max_length=2000)
     title: str | None = None
     attendees: list[MeetingAttendee] = Field(default_factory=list, max_length=100)
+    # "bolna": the meeting phones Cue's Bolna number instead of a Recall bot joining.
+    voice: str = Field(default="recall", pattern="^(recall|bolna)$")
 
 
 @app.post("/v1/tenants/{tenant_id}/meetings", status_code=202)
 async def meeting_join(tenant_id: UUID, body: MeetingJoinBody,
                        uid: str = Depends(firebase_uid)) -> dict:
+    bot = bolna.BolnaMeetingBot() if body.voice == "bolna" else None
     try:
-        return await run_in_threadpool(
+        result = await run_in_threadpool(
             meeting_service.join_meeting, tenant_id, uid, body.meeting_url,
-            [item.model_dump() for item in body.attendees], title=body.title,
+            [item.model_dump() for item in body.attendees], title=body.title, bot=bot,
         )
+        if bot is not None:
+            result["dial"] = os.getenv("BOLNA_PHONE_NUMBER")
+        return result
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _bolna_tenant(request: Request) -> UUID:
+    scheme, _, key = request.headers.get("Authorization", "").partition(" ")
+    tenant_id = bolna.tenant_for_key(key) if scheme.lower() == "bearer" and key else None
+    if tenant_id is None:
+        raise HTTPException(status_code=401, detail="Invalid Bolna model key")
+    return tenant_id
+
+
+@app.get("/bolna/v1/models")
+def bolna_models(request: Request) -> dict:
+    _bolna_tenant(request)
+    return {"object": "list", "data": [{"id": "cue", "object": "model", "owned_by": "cue"}]}
+
+
+@app.post("/bolna/v1/chat/completions")
+async def bolna_chat(request: Request):
+    """OpenAI-compatible endpoint Bolna calls for each caller turn on the meeting line."""
+    tenant_id = _bolna_tenant(request)
+    body = await request.json()
+    model = str(body.get("model") or "cue")
+    pieces = bolna.respond(tenant_id, list(body.get("messages") or []),
+                           gateway=LiteLLMGateway(), registry=ToolRegistry())
+    if body.get("stream"):
+        return StreamingResponse(bolna.sse(pieces, model), media_type="text/event-stream")
+    return await run_in_threadpool(lambda: bolna.completion(list(pieces), model))
 
 
 @app.get("/v1/tenants/{tenant_id}/meetings/{meeting_id}/notes")
@@ -561,6 +694,34 @@ def admin_quiet_hours(tenant_id: UUID, body: QuietHoursBody,
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"scope": body.scope, "subject": body.subject, "timezone": window.timezone,
             "start": window.start.isoformat(), "end": window.end.isoformat()}
+
+
+@app.get("/v1/tenants/{tenant_id}/proactive")
+def proactive_view(tenant_id: UUID, uid: str = Depends(firebase_uid),
+                   limit: int = Query(default=50, ge=1, le=200)) -> dict:
+    """Rules, recent runs and mutes for this tenant."""
+    with agent_store.tenant_connection(tenant_id) as database:
+        if agent_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        rules = proactive_rules.all_rules(database, tenant_id)
+        recent_runs = proactive_rules.runs(database, tenant_id, limit=limit)
+        muted = proactive_rules.mutes(database, tenant_id)
+        windows = quiet.list_windows(database, tenant_id)
+
+    def _moment(value):
+        return value.isoformat() if value is not None else None
+
+    return {
+        "rules": [{**rule, "id": str(rule["id"]), "next_run_at": _moment(rule["next_run_at"]),
+                   "last_run_at": _moment(rule["last_run_at"])} for rule in rules],
+        "runs": [{**run, "id": str(run["id"]),
+                  "task_id": str(run["task_id"]) if run["task_id"] else None,
+                  "deliver_after": _moment(run["deliver_after"]),
+                  "created_at": _moment(run["created_at"])} for run in recent_runs],
+        "mutes": [{**item, "created_at": _moment(item["created_at"])} for item in muted],
+        "quiet_hours": [{**item, "start_time": item["start_time"].isoformat(),
+                         "end_time": item["end_time"].isoformat()} for item in windows],
+    }
 
 
 @app.post("/v1/tenants/{tenant_id}/proactive/rules")
