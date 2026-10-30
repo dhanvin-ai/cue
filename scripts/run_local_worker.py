@@ -1,9 +1,7 @@
-"""Run agent tasks locally with the read-only tool catalog registered.
+"""Run agent tasks locally with the tenant's connector tools registered.
 
-scripts/run_tasks.py is the production-shaped dispatcher but registers no tool
-handlers, so tier 0 reads fail there until a deployment wires them up. This
-worker adds the memory read tool so the web console can be exercised end to end
-without any external write capability.
+Like scripts/run_tasks.py, but it loops and adds a stub tracker write when no
+Linear connection is bound, so the console can show approvals end to end.
 
 Usage:  python scripts/run_local_worker.py [--tenant UUID] [--interval SECONDS]
 """
@@ -13,53 +11,32 @@ import os
 import time
 from uuid import UUID
 
-from cue.memory.query import query_memory
 from cue.runtime.executor import ToolRegistry, ToolSpec
 from cue.runtime.gateway import LiteLLMGateway
 from cue.runtime.queue import LocalQueue
 from cue.runtime.scheduler import tick
 from cue.runtime.service import run_task
 from cue.runtime import store
+from cue.runtime.tools import build_registry
 
 from _local_env import load_local_env
 
 
 def local_registry(tenant: UUID, requester: str,
                    database_url: str | None = None) -> ToolRegistry:
-    """Tier 0 only: reading team memory inside the requester's own permissions.
+    """The real per-task catalog from bound connections, plus a stub tracker write.
 
-    Built per task so the tool can never run as someone other than the asker.
+    Without a Linear connection, a tier 2 stub keeps the approval gate demonstrable
+    without touching an external system.
     """
-
-    def memory_query(arguments: dict):
-        result = query_memory(
-            tenant, requester,
-            str(arguments.get("question") or ""),
-            list(arguments.get("participants") or []),
-            database_url or os.environ["DATABASE_URL"],
-        )
-        return {
-            "route": result["route"],
-            "answer": result.get("answer"),
-            "citations": [
-                {"number": item["number"], "source": item.get("source"),
-                 "type": item.get("type"), "url": item.get("url"),
-                 "text": (item.get("text") or "")[:400]}
-                for item in result.get("citations", [])[:8]
-            ],
-        }
-
-    def linear_create_issue(arguments: dict):
-        # Tier 2 stands in for a real tracker write: it proves the approval gate
-        # without touching an external system from a local run.
-        return {"created": True, "title": arguments.get("title"),
-                "url": "https://linear.example/cue/issue/local-stub"}
-
-    return ToolRegistry([
-        ToolSpec("memory.query", 0, memory_query, "Search ACL-filtered team memory"),
-        ToolSpec("linear.create_issue", 2, linear_create_issue,
-                 "Create a tracker issue"),
-    ])
+    registry = build_registry(tenant, requester, database_url=database_url)
+    if registry.get("linear.create_issue") is None:
+        registry.add(ToolSpec(
+            "linear.create_issue", 2,
+            lambda arguments: {"created": True, "title": arguments.get("title"),
+                               "url": "https://linear.example/cue/issue/local-stub"},
+            "Create a tracker issue (local stub)"))
+    return registry
 
 
 def main() -> None:

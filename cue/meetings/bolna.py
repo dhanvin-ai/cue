@@ -84,7 +84,11 @@ def _user_turns(messages: list[dict]) -> list[str]:
 
 def respond(tenant_id: UUID, messages: list[dict], *, gateway, registry, memory=None,
             database_url: str | None = None, now: datetime | None = None) -> Iterator[str]:
-    """Yield spoken text for the latest caller turn; yield nothing to stay silent."""
+    """Yield spoken text for the latest caller turn; yield nothing to stay silent.
+
+    `registry` may be a callable taking the requester UID. Phone audio has no speaker identity,
+    so a dial-in turn always runs as the meeting owner.
+    """
     moment = now or datetime.now(timezone.utc)
     utterances = _user_turns(messages)
     if not utterances or not utterances[-1]:
@@ -104,6 +108,8 @@ def respond(tenant_id: UUID, messages: list[dict], *, gateway, registry, memory=
     if not check.check(text, now=moment):
         return
     yield FILLER
+    if callable(registry):
+        registry = registry(meeting["owner_uid"])
     sink = TextSink()
     result = service.handle_turn(
         tenant_id, meeting_id, Turn(CALLER, text, moment, moment, "endpoint"),

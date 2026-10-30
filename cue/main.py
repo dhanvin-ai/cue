@@ -38,7 +38,7 @@ from cue.proactive import quiet, rules as proactive_rules
 from cue.runtime import ingress as agent_ingress
 from cue.runtime import service as agent_service
 from cue.runtime import store as agent_store
-from cue.runtime.executor import ToolRegistry
+from cue.runtime import tools as agent_tools
 from cue.runtime.gateway import LiteLLMGateway
 
 app = FastAPI(title="Cue API")
@@ -444,9 +444,15 @@ async def internal_task(tenant_id: UUID, task_id: UUID, request: Request) -> dic
     if not token or not hmac.compare_digest(token, key.decode()):
         raise HTTPException(status_code=401, detail="Invalid task token")
     try:
+        with agent_store.tenant_connection(tenant_id) as database:
+            task = agent_store.get_task(database, tenant_id, task_id)
+        if task is None:
+            raise agent_service.TaskNotFound(str(task_id))
+        registry = await run_in_threadpool(
+            agent_tools.build_registry, tenant_id, task["requester_uid"])
         return await run_in_threadpool(
             agent_service.run_task, tenant_id, task_id,
-            gateway=LiteLLMGateway(), registry=ToolRegistry(),
+            gateway=LiteLLMGateway(), registry=registry,
         )
     except agent_service.TaskNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -507,7 +513,8 @@ async def bolna_chat(request: Request):
     body = await request.json()
     model = str(body.get("model") or "cue")
     pieces = bolna.respond(tenant_id, list(body.get("messages") or []),
-                           gateway=LiteLLMGateway(), registry=ToolRegistry())
+                           gateway=LiteLLMGateway(),
+                           registry=lambda uid: agent_tools.build_registry(tenant_id, uid))
     if body.get("stream"):
         return StreamingResponse(bolna.sse(pieces, model), media_type="text/event-stream")
     return await run_in_threadpool(lambda: bolna.completion(list(pieces), model))
@@ -535,7 +542,7 @@ async def meeting_end(tenant_id: UUID, meeting_id: UUID,
         return await run_in_threadpool(
             meeting_service.end_meeting, tenant_id, meeting_id,
             notes_model=meeting_notes.GatewayNotesModel(LiteLLMGateway()),
-            registry=ToolRegistry(),
+            registry=agent_tools.build_registry(tenant_id, uid),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

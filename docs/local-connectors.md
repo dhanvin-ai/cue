@@ -78,9 +78,24 @@ python scripts/poll_connectors.py TENANT_UUID --once   # first import, 12 months
 python scripts/poll_connectors.py TENANT_UUID          # keep fresh every 60s
 ```
 
+## Agent tools
+
+`cue/runtime/tools.py` builds the planner's catalog per task from the tenant's bound connections.
+Tiers come from each connector's `tools()`:
+
+| Tool | Tier | Default |
+|---|---|---|
+| `memory.query`, `calendly.list_event_types` | 0 | runs |
+| `gmail.create_draft`, `calendly.create_booking_link`, `slack.post_message` | 1 | runs, logged |
+| `github.create_issue`, `github.comment_issue`, `github.request_review`, `calendar.create_event`, `linear.create_issue` | 2 | one-click approval |
+| `gmail.send` | 3 | explicit approval every time |
+
+Gmail and Calendar writes act only as the agent's own account. Set `CUE_AGENT_EMAIL` to that
+mailbox. With several mailboxes bound and none matching, those tools are left out, so Cue never
+sends as a teammate. `CUE_DEFAULT_REPO=owner/name` lets "file an issue" work without naming a repo.
+
 ## Still open
 
-- The new Calendly tools exist on the connector but are not yet registered in the runtime's tool
-  registry. The same is true of the GitHub and Gmail write methods; `run_local_worker.py` registers
-  only `memory.query` and a stubbed Linear write.
 - None of this has run against live accounts yet. Expect first-contact fixes in normalizers.
+- Read tools such as `github.read_issue` have no handlers yet. Live reads go through
+  `memory.query` and the query router.
