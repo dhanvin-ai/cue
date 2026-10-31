@@ -1,0 +1,39 @@
+{
+  "name": "cue_frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "video:studio": "remotion studio",
+    "video:mp4": "remotion render CueMeetingDemo public/video/cue-meeting-demo.mp4 --codec=h264 --crf=20",
+    "video:webm": "remotion render CueMeetingDemo public/video/cue-meeting-demo.webm --codec=vp9 --crf=34",
+    "video:poster": "remotion still CueMeetingDemo public/video/cue-meeting-demo-poster.jpg --frame=160 --props=video/poster-props.json --jpeg-quality=88",
+    "video:render": "npm run video:mp4 && npm run video:webm && npm run video:poster"
+  },
+  "dependencies": {
+    "lucide-react": "^1.64.0",
+    "motion": "^14.7.1",
+    "next": "16.4.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.539",
+    "@remotion/google-fonts": "4.0.539",
+    "@remotion/tailwind-v4": "4.0.539",
+    "@remotion/transitions": "4.0.539",
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.3",
+    "remotion": "4.0.539",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

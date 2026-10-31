@@ -1,0 +1,205 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #fafaf7;
+  --color-paper-deep: #f3f3ee;
+  --color-ink: #0f100d;
+  --color-ink-soft: #34352f;
+  --color-muted: #74756d;
+  --color-faint: #a3a49c;
+  --color-line: #e8e8e2;
+  --color-line-soft: #f0f0ea;
+  --color-lime: #d9f25c;
+  --color-lime-soft: #edf8b0;
+  --color-lime-wash: #f6fbd9;
+  --color-lime-ink: #5b6b0c;
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --shadow-tile:
+    inset 0 1px 0 rgb(255 255 255 / 0.9), 0 1px 2px rgb(15 16 13 / 0.04),
+    0 8px 16px -4px rgb(15 16 13 / 0.08), 0 28px 48px -16px rgb(15 16 13 / 0.18);
+  --shadow-card: 0 1px 2px rgb(15 16 13 / 0.04), 0 6px 16px -6px rgb(15 16 13 / 0.08);
+  --shadow-window:
+    0 1px 0 rgb(255 255 255 / 0.8) inset, 0 2px 4px rgb(15 16 13 / 0.03),
+    0 24px 60px -20px rgb(15 16 13 / 0.18), 0 60px 120px -40px rgb(15 16 13 / 0.12);
+
+  --animate-shimmer: shimmer 1.6s linear infinite;
+
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-lime-soft);
+  color: var(--color-ink);
+}
+
+/* Faint ruled grid behind the hero, faded out toward the edges. */
+.hero-grid {
+  background-image:
+    linear-gradient(to bottom, rgb(15 16 13 / 0.055) 1px, transparent 1px),
+    linear-gradient(to right, rgb(15 16 13 / 0.035) 1px, transparent 1px);
+  background-size:
+    100% 112px,
+    112px 100%;
+  background-position: center -1px;
+  mask-image: radial-gradient(ellipse 70% 62% at 50% 42%, black 30%, transparent 78%);
+}
+
+/* Integration marquee: two identical groups, each padded by one gap, so
+   translating the track by -50% lands exactly on the next copy. */
+.marquee {
+  /* Multiplies every logo height, label size and gap in the strip. */
+  --marquee-scale: 1.15;
+  --marquee-gap: calc(2.25rem * var(--marquee-scale));
+  position: relative;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent, black 14%, black 86%, transparent);
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee var(--marquee-duration, 40s) linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.marquee-group {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--marquee-gap);
+  padding-right: var(--marquee-gap);
+}
+
+@keyframes marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@media (min-width: 640px) {
+  .marquee {
+    --marquee-scale: 1.35;
+    --marquee-gap: calc(2.5rem * var(--marquee-scale));
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .marquee:hover .marquee-track {
+    animation-play-state: paused;
+  }
+}
+
+/* No auto-scroll: the same single row, scrollable by hand, so the hero keeps its height. */
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .marquee::-webkit-scrollbar {
+    display: none;
+  }
+  .marquee-track {
+    animation: none;
+  }
+  .marquee-group[aria-hidden="true"] {
+    display: none;
+  }
+}
+
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-muted) 0%,
+    var(--color-muted) 40%,
+    var(--color-ink) 50%,
+    var(--color-muted) 60%,
+    var(--color-muted) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: var(--animate-shimmer);
+}
+
+/* Meeting demo: play-button pulse and the video modal opening. */
+@keyframes demo-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  to {
+    transform: scale(1.75);
+    opacity: 0;
+  }
+}
+
+@keyframes demo-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+}
+
+@keyframes demo-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.demo-pulse {
+  animation: demo-pulse 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.demo-dialog[open] {
+  animation: demo-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.demo-dialog[open]::backdrop {
+  animation: demo-fade 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-pulse {
+    animation: none;
+    opacity: 0;
+  }
+  .demo-dialog[open],
+  .demo-dialog[open]::backdrop {
+    animation: none;
+  }
+}
