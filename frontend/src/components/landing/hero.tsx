@@ -110,7 +110,7 @@ export function Hero() {
           </motion.p>
 
           <motion.div {...rise(0.85)} className="mt-9 flex flex-col items-center gap-4 sm:mt-10">
-            <PillLink href={routes.getStarted} size="lg" dot>
+            <PillLink href={routes.meetCue} size="lg" dot>
               Meet CUE
             </PillLink>
             <IntegrationMarquee label="Works with" className="mt-4 w-[min(980px,100vw-2rem)]" />

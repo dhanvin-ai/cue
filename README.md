@@ -66,6 +66,10 @@ Slack, email, and web requests enter one runtime that builds ACL-filtered contex
 
 The Recall meeting bot joins calls, diarized speakers map to tenant members, and Cue answers only when addressed. Responses stream through TTS with interruption handling. After the meeting, transcript-backed summaries, decisions, and action items are published under the attendee ACL; tool actions go through the Phase 6 approval flow. See [meeting voice setup](docs/phase7.md).
 
+## Meet CUE live demo
+
+The landing page's Meet CUE button books a real Google Meet with Cue: Cue's account creates the meeting, the self-hosted face bot joins, and Cue talks with the visitor using faster-whisper, Claude and Kokoro, then shares a summary. It runs as a separate, isolated service with no access to tenant data. See [Meet CUE demo setup](docs/meet-cue-demo.md).
+
 ## Phase 8 proactive and pilot controls
 
 Scheduled digests, reminders, stale-PR checks, and overdue-action follow-ups run through the Phase 6 runtime and approval tiers, with quiet hours and per-person mutes. Tenant and connector kill switches stop ingestion and outbound work, buffering or dropping deliveries until resume. Deletion and revocation purge the event log, graph, vectors, summaries, and meeting notes; reconciliation reports drift and backfills gaps. Admins can export audit rows and inspect the access report, and every tenant exposes pilot status. See [pilot runbook](docs/phase8.md).

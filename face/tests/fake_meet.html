@@ -2,7 +2,8 @@
 <!-- A tiny stand-in for Google Meet's join flow, used only by the tests. It exposes the same
      accessible names face_bot.py looks for, calls getUserMedia like Meet does, and sends the
      tracks over a loopback RTCPeerConnection so the tests can inspect what "the meeting" receives.
-     Query params: ?deny=1 rejects the join, ?admit_ms=N delays admission, ?signed_in=1 hides the name box. -->
+     Query params: ?deny=1 rejects the join, ?admit_ms=N delays admission, ?signed_in=1 hides the name box,
+     ?say=URL makes the simulated participant play that WAV once Cue has spoken and gone quiet. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -67,8 +68,12 @@
         state.joinedAt = performance.now();
         state.gumCalls += 1;
         const local = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        // `a` sends Cue's tracks like Meet's own connection (tracked by the face for stats). `b` stands
+        // in for the far side, so it uses the browser's own class: Cue's voice must not come back as
+        // "another participant". The simulated participant below arrives on a tracked connection.
+        const Native = (window.CueFace && CueFace.NativeRTCPeerConnection) || RTCPeerConnection;
         const a = new RTCPeerConnection();
-        const b = new RTCPeerConnection();
+        const b = new Native();
         a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
         b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
         const remote = new MediaStream();
@@ -83,6 +88,56 @@
         await b.setLocalDescription(await b.createAnswer());
         await a.setRemoteDescription(b.localDescription);
         state.pcs = [a, b];
+        await connectParticipant();
+      }
+
+      // A simulated participant whose voice reaches the page as remote WebRTC audio, like Meet.
+      async function connectParticipant() {
+        const Native = (window.CueFace && CueFace.NativeRTCPeerConnection) || RTCPeerConnection;
+        const ctx = new AudioContext();
+        const dest = ctx.createMediaStreamDestination();
+        const c = new Native();
+        const d = new RTCPeerConnection();
+        c.onicecandidate = (e) => e.candidate && d.addIceCandidate(e.candidate);
+        d.onicecandidate = (e) => e.candidate && c.addIceCandidate(e.candidate);
+        c.addTrack(dest.stream.getAudioTracks()[0], dest.stream);
+        await c.setLocalDescription(await c.createOffer());
+        await d.setRemoteDescription(c.localDescription);
+        await d.setLocalDescription(await d.createAnswer());
+        await c.setRemoteDescription(d.localDescription);
+        state.pcs.push(c, d);
+        const play = async (bytes) => {
+          await ctx.resume();
+          const buffer = await ctx.decodeAudioData(bytes);
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(dest);
+          src.start();
+          return buffer.duration;
+        };
+        // window.participantSays(base64Wav): play speech into the call as the participant.
+        window.participantSays = (b64) => play(Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)).buffer);
+        if (params.get('say')) sayAfterCue(params.get('say'), play);
+      }
+
+      // Waits for Cue's greeting to be heard and then a second of quiet, then speaks once.
+      async function sayAfterCue(url, play) {
+        const bytes = await (await fetch(url)).arrayBuffer();
+        let heard = false;
+        let quietSince = null;
+        const timer = setInterval(() => {
+          if (state.remoteLevel > 0.02) {
+            heard = true;
+            quietSince = null;
+          } else if (heard) {
+            quietSince = quietSince || performance.now();
+            if (performance.now() - quietSince > 1000) {
+              clearInterval(timer);
+              state.said = true;
+              play(bytes);
+            }
+          }
+        }, 50);
       }
 
       // What the other participants would hear: level of the received audio track.

@@ -33,6 +33,7 @@
 
     installMediaOverride(app);
     trackPeerConnections();
+    if (config.captureAudio) CueFace.onRemoteAudio = listenToMeeting(app, emit);
     if (config.mock) new CueFace.MockMeeting(app).run();
     emit({ type: 'ready', version: CueFace.version, mode: 'embedded' });
     return app;
@@ -75,12 +76,17 @@
       constructor(...args) {
         super(...args);
         live.add(this);
+        // Remote audio is what other participants say; Meet never sends Cue's own voice back.
+        this.addEventListener('track', (event) => {
+          if (event.track.kind === 'audio' && CueFace.onRemoteAudio) CueFace.onRemoteAudio(event.track);
+        });
         this.addEventListener('connectionstatechange', () => {
           if (this.connectionState === 'closed') live.delete(this);
         });
       }
     }
     TrackedPeerConnection.__cueTracked = true;
+    CueFace.NativeRTCPeerConnection = Native;
     g.RTCPeerConnection = TrackedPeerConnection;
     CueFace.outboundStats = async function outboundStats() {
       const out = { peerConnections: live.size, videoFramesSent: 0, frameWidth: 0, frameHeight: 0, framesPerSecond: 0, audioPacketsSent: 0 };
@@ -104,6 +110,63 @@
         });
       }
       return out;
+    };
+  }
+
+  /* Mixes every remote audio track, downsamples to 16 kHz mono PCM16 and emits ~200 ms chunks as
+   * {type: 'audio_in'} for the backend's speech-to-text. A ScriptProcessorNode is used because
+   * AudioWorklet modules need a blob or remote URL, and blob-URL workers crash the Meet tab. */
+  function listenToMeeting(app, emit) {
+    const ctx = app.audio;
+    const mix = ctx.createGain();
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+    mix.connect(processor);
+    processor.connect(sink);
+    sink.connect(ctx.destination);
+    const ratio = ctx.sampleRate / 16000;
+    let chunks = [];
+    let length = 0;
+    let seq = 0;
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      const n = Math.floor(input.length / ratio);
+      const out = new Int16Array(n);
+      for (let i = 0; i < n; i++) {
+        const a = Math.floor(i * ratio);
+        const b = Math.max(a + 1, Math.floor((i + 1) * ratio));
+        let sum = 0;
+        for (let j = a; j < b; j++) sum += input[j];
+        out[i] = Math.max(-1, Math.min(1, sum / (b - a))) * 32767;
+      }
+      chunks.push(out);
+      length += n;
+      if (length >= 3200) {
+        const joined = new Int16Array(length);
+        let offset = 0;
+        for (const c of chunks) {
+          joined.set(c, offset);
+          offset += c.length;
+        }
+        chunks = [];
+        length = 0;
+        emit({ type: 'audio_in', seq: seq++, sample_rate: 16000, pcm: CueFace.bytesToBase64(new Uint8Array(joined.buffer)) });
+      }
+    };
+    const seen = new Set();
+    return function addTrack(track) {
+      if (seen.has(track.id)) return;
+      seen.add(track.id);
+      const stream = new MediaStream([track]);
+      // Chrome only feeds remote WebRTC audio into Web Audio once a media element consumes it.
+      const element = new Audio();
+      element.muted = true;
+      element.srcObject = stream;
+      element.play().catch(() => {});
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(mix);
+      track.addEventListener('ended', () => source.disconnect());
     };
   }
 

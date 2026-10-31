@@ -14,6 +14,12 @@
   --color-lime-wash: #f6fbd9;
   --color-lime-ink: #5b6b0c;
 
+  /* Errors only (form validation, failed requests). Warm, muted, never a bright red. */
+  --color-alert: #c4583a;
+  --color-alert-ink: #6e2f1b;
+  --color-alert-line: #efc9bb;
+  --color-alert-wash: #fdf5f1;
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 

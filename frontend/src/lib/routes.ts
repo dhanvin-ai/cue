@@ -7,4 +7,9 @@ export const routes = {
   login: "/login",
   // The "Hire your teammate" wizard (Experience Design, Journey 1) will live here.
   getStarted: "/get-started",
+  // Live demo: meet Cue in a Google Meet now, or book a time.
+  meetCue: "/meet-cue",
 } as const;
+
+/** A visitor's demo session page (status, join link, summary). */
+export const meetCueSession = (id: string) => `${routes.meetCue}/session/${id}`;

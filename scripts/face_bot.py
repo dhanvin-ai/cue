@@ -159,6 +159,24 @@ async def ensure_devices_on(page: Page) -> None:
                 log.warning("Could not turn on %s: %s", device, error)
 
 
+async def admit_waiting(page: Page) -> str | None:
+    """Clicks Meet's "Admit" for one person asking to join. Returns their name ("" if unknown),
+    or None when nobody is waiting. Only used when Cue hosts the meeting (the demo)."""
+    locator = button(page, r"^admit$")
+    if not await visible(locator):
+        return None
+    name = ""
+    try:
+        dialog = page.get_by_role("dialog").filter(has=locator.first)
+        if await dialog.count():
+            name = re.sub(r"\s+", " ", (await dialog.first.inner_text(timeout=1000)).split("\n")[0])[:80]
+        await locator.first.click(timeout=3000)
+    except PlaywrightError as error:
+        log.warning("Could not admit a guest: %s", error)
+        return None
+    return name
+
+
 # ---------------------------------------------------------------------------------------------
 # Bot
 
@@ -177,6 +195,9 @@ class BotOptions:
     join_timeout: float = 60.0
     admission_timeout: float = 600.0
     alone_timeout: float = 300.0
+    wait_for_guest: float | None = None
+    auto_admit: int = 0
+    capture_audio: bool = False
     max_minutes: float = 240.0
     host_pattern: str = MEET_HOST_PATTERN
     extra_args: list[str] = field(default_factory=list)
@@ -270,7 +291,9 @@ class FaceBot:
             handle_sighup=False,
         )
         await self.context.expose_binding(EMIT_BINDING, self._on_face_emit)
-        init = build_init_script({"captions": self.o.captions, "mock": self.o.mock, "fps": 30}, self.o.host_pattern)
+        init = build_init_script(
+            {"captions": self.o.captions, "mock": self.o.mock, "fps": 30, "captureAudio": self.o.capture_audio}, self.o.host_pattern
+        )
         await self.context.add_init_script(init)
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         self.page.on("close", lambda _: self.request_stop("Meet tab closed"))
@@ -370,8 +393,11 @@ class FaceBot:
 
     async def _stay(self) -> None:
         page = self.page
-        ends_at = time.monotonic() + self.o.max_minutes * 60
+        started = time.monotonic()
+        ends_at = started + self.o.max_minutes * 60
         alone_since: float | None = None
+        seen_guest = False
+        admitted = 0
         while not self.stopping.is_set():
             if time.monotonic() > ends_at:
                 self.request_stop("max duration reached")
@@ -383,14 +409,25 @@ class FaceBot:
                 self.status = "left"
                 await self._report("left", reason=status)
                 return
+            if admitted < self.o.auto_admit and (name := await admit_waiting(page)) is not None:
+                admitted += 1
+                seen_guest = True
+                log.info("Admitted %s (%d of %d allowed)", name or "a guest", admitted, self.o.auto_admit)
+                await self._report("admitted", detail=name)
             if ALONE.search(text):
                 alone_since = alone_since or time.monotonic()
-                if time.monotonic() - alone_since > self.o.alone_timeout:
+                if seen_guest and time.monotonic() - alone_since > self.o.alone_timeout:
                     self.request_stop("alone in the meeting")
             else:
+                if not seen_guest:
+                    log.info("Someone else is in the call")
+                    await self._report("guest_present")
+                seen_guest = True
                 alone_since = None
+            if not seen_guest and self.o.wait_for_guest and time.monotonic() - started > self.o.wait_for_guest:
+                self.request_stop("nobody joined")
             try:
-                await asyncio.wait_for(self.stopping.wait(), 2)
+                await asyncio.wait_for(self.stopping.wait(), 1)
             except TimeoutError:
                 pass
 
@@ -580,7 +617,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     join.add_argument("--no-captions", dest="captions", action="store_false")
     join.add_argument("--join-timeout", type=float, default=60)
     join.add_argument("--admission-timeout", type=float, default=600)
-    join.add_argument("--alone-timeout", type=float, default=300, help="leave after being alone this many seconds")
+    join.add_argument("--alone-timeout", type=float, default=300, help="leave after being alone this long once someone has joined")
+    join.add_argument("--wait-for-guest", type=float, default=None, help="leave if nobody else joins within this many seconds")
+    join.add_argument("--auto-admit", type=int, default=0, help="when Cue hosts, admit up to N people who ask to join")
+    join.add_argument("--capture-audio", action="store_true", help="stream meeting audio to the --ws backend as audio_in")
     join.add_argument("--max-minutes", type=float, default=240)
     join.add_argument("--host-pattern", default=MEET_HOST_PATTERN, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -595,6 +635,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger("websockets").setLevel(logging.INFO)  # -v would otherwise log every audio frame
     if args.command == "login":
         return login(args.profile)
     if not args.guest and (pid := profile_in_use(args.profile)):
@@ -618,6 +659,9 @@ def main(argv: list[str] | None = None) -> int:
         join_timeout=args.join_timeout,
         admission_timeout=args.admission_timeout,
         alone_timeout=args.alone_timeout,
+        wait_for_guest=args.wait_for_guest,
+        auto_admit=args.auto_admit,
+        capture_audio=args.capture_audio,
         max_minutes=args.max_minutes,
         host_pattern=args.host_pattern,
     )
