@@ -1,0 +1,7 @@
+@import "../src/app/globals.css";
+
+@source ".";
+
+body {
+  background: transparent;
+}
