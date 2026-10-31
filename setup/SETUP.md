@@ -2,7 +2,7 @@
 
 This guide takes a fresh machine to a running Cue that reads your real GitHub, Gmail, Calendar and
 Calendly and joins Google Meet. For how the system works inside, see
-[docs/GUIDE.md](docs/GUIDE.md).
+[docs/GUIDE.md](../docs/GUIDE.md).
 
 - [1. Prerequisites](#1-prerequisites)
 - [2. Install and first run](#2-install-and-first-run)
@@ -36,8 +36,8 @@ git clone https://github.com/dhanvin-ai/cue && cd cue
 
 | Windows | macOS / Linux |
 |---|---|
-| `setup.bat` | `chmod +x setup.sh start.sh && ./setup.sh` |
-| `start.bat` | `./start.sh` |
+| `setup\setup.bat` | `chmod +x setup/*.sh && ./setup/setup.sh` |
+| `setup\start.bat` | `./setup/start.sh` |
 
 `setup` is a one-time step and safe to rerun. It:
 
@@ -281,7 +281,7 @@ Cue joins Google Meet as a named participant through self-hosted
    ATTENDEE_WEBHOOK_BASE_URL=http://host.docker.internal:8080
    ```
 
-3. **Voice (optional, NVIDIA GPU).** Run `start --voice`, then set:
+3. **Voice (optional, NVIDIA GPU).** Run `start --voice` (`setup\start.bat --voice` or `./setup/start.sh --voice`), then set:
 
    ```ini
    CUE_TRANSCRIBER=whisper   # whisper | kyutai | captions

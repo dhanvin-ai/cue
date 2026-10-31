@@ -1,4 +1,4 @@
-# Phase 3: canonical ingestion and replay
+# Event pipeline: canonical ingestion and replay
 
 This implements the PDF's Pub/Sub → GCS raw archive → normalized event → entity resolution → fan-out path. Phase 4 adds Gmail, Calendar, Slack, Linear, and Recall to the original GitHub path. The fan-out topic is the handoff to graph, vector, structured and summarizer consumers in the next memory phase; those stores are not yet populated.
 

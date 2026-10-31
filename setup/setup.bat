@@ -2,7 +2,7 @@
 REM One-time local setup for Cue on Windows. Safe to rerun.
 REM Needs: Python 3.12+, Docker Desktop. See SETUP.md.
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 where py >nul 2>nul && (set PY=py -3.12) || (set PY=python)
 
@@ -35,7 +35,7 @@ echo [6/6] Demo tenant and admin
 python scripts\seed_dev_tenant.py || goto :fail
 
 echo.
-echo Setup done. Next: connect your accounts (SETUP.md), then run start.bat
+echo Setup done. Next: connect your accounts (SETUP.md), then run setup\start.bat
 exit /b 0
 
 :fail

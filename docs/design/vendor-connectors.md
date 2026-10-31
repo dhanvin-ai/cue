@@ -1,4 +1,4 @@
-# Phase 4: v1 connector groups
+# Vendor connectors
 
 This phase follows the PDF's six groups: Gmail, Google Calendar, Google Meet/Zoom through a meeting-bot API, Slack, GitHub, and one tracker. We selected **Linear** for the tracker and **Recall.ai** for the meeting-bot adapter. The code paths reach the Phase 3 raw Pub/Sub topic and retain ACLs in canonical events. Live vendor credentials and GCP resources are required to exercise them outside mocks.
 

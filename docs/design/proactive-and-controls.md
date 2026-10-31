@@ -1,4 +1,4 @@
-# Phase 8: proactive work and pilot readiness
+# Proactive work and pilot controls
 
 Adds proactive rules, quiet hours, kill switches, deletion/revocation propagation, reconciliation, audit export, and pilot status on top of Phases 1-7.
 

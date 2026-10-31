@@ -4,7 +4,7 @@ Cue is an AI teammate for software teams. It has its own mailbox, calendar and G
 remembers what the team's tools say, answers questions in chat and out loud in Google Meet, and
 carries out actions once a person approves them.
 
-To get it running, see [SETUP.md](../SETUP.md). This document explains how the pieces fit.
+To get it running, see [setup/SETUP.md](../setup/SETUP.md). This document explains how the pieces fit.
 
 ## The system
 
@@ -100,8 +100,8 @@ Chat in the console follows the same steps from step 4 on, via `POST /v1/tenants
 
 | Script | When |
 |---|---|
-| `setup.bat` / `setup.sh` | once per machine |
-| `start.bat` / `start.sh` (`scripts/run_stack.py`) | every session |
+| `setup/setup.bat` / `setup/setup.sh` | once per machine |
+| `setup/start.bat` / `setup/start.sh` (`scripts/run_stack.py`) | every session |
 | `migrate.py`, `ensure_partitions.py` | after pulling new migrations; monthly |
 | `local_gcp.py` | creates emulator topics and the bucket |
 | `seed_dev_tenant.py` | creates the demo tenant and admin |
@@ -141,9 +141,14 @@ CI (`.github/workflows/tests.yml`) runs the same suites against service containe
 
 ## Deeper docs
 
-Each phase has its own design notes:
+Design notes, by subsystem:
 
-- [connectors](phase2-connectors.md), [ingestion](phase3-ingestion.md), [v1 connectors](phase4-connectors.md)
-- [memory](phase5-memory.md), [agent runtime](phase6.md), [meeting voice](phase7.md)
-- [proactive and pilot controls](phase8.md)
-- [Attendee](attendee.md), [Bolna](bolna.md), [local connectors](local-connectors.md), [frontend](frontend.md)
+- [Connector framework](design/connector-contract.md) and [vendor connectors](design/vendor-connectors.md)
+- [Event pipeline](design/event-pipeline.md) and [memory and query routing](design/memory.md)
+- [Agent runtime and actions](design/agent-runtime.md) and [meeting voice](design/meeting-voice.md)
+- [Proactive work and pilot controls](design/proactive-and-controls.md)
+
+Operational notes:
+
+- [Attendee meeting bot](attendee.md), [Bolna phone voice](bolna.md), [local connectors](local-connectors.md)
+- [Console](frontend.md), [end-to-end tests](e2e-testing.md), [licensing](licensing.md)

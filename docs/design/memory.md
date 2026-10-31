@@ -1,4 +1,4 @@
-# Phase 5: memory and query routing
+# Memory and query routing
 
 This phase implements the PDF's five-store design: the Phase 3 append-only event log, a temporal Postgres graph, a Qdrant vector index, Postgres summaries, and live connector reads. Counts use structured Postgres rows. Relationship questions use graph edges; recall uses Qwen3 vector search plus Postgres full-text search; period overviews use summaries. The query API returns the chosen route, an answer, and source citations.
 

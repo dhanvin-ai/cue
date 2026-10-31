@@ -1,4 +1,4 @@
-# Phase 2: connector framework
+# Connector framework
 
 The code in `cue/connectors/base.py` defines the six connector operations in the architecture: `authorize`, `backfill`, `subscribe`, `normalize`, `acl`, and `tools`. GitHub is the first implementation. Its installation access token is generated when needed; neither that token nor the App private key is stored in Postgres.
 

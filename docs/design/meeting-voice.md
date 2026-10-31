@@ -1,4 +1,4 @@
-# Phase 7: meeting voice
+# Meeting voice
 
 Cue joins a meeting through the Phase 4 Recall adapter, consumes diarized transcript segments,
 answers only when addressed, and publishes notes with the meeting ACL.

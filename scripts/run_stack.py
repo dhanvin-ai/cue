@@ -1,7 +1,7 @@
 """Start the API and every local worker in one terminal; Ctrl+C stops them all.
 
 Loads .env, then runs uvicorn, the raw/outbox/memory workers, and the connector poller,
-prefixing each line with the process name. Used by start.bat and start.sh.
+prefixing each line with the process name. Used by setup/start.bat and setup/start.sh.
 
 Usage: python scripts/run_stack.py [--tenant UUID] [--port 8080] [--poll 60] [--no-poll]
 """

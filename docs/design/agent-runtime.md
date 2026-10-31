@@ -1,4 +1,4 @@
-# Phase 6: agent runtime and actions
+# Agent runtime and actions
 
 One runtime serves every interface: Slack mentions, agent-inbox email, the web app, and schedules
 normalize to a `RuntimeRequest` and persist an `agent_tasks` row before anything runs.

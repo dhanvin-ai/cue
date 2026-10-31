@@ -2,7 +2,7 @@
 # One-time local setup for Cue on macOS or Linux. Safe to rerun.
 # Needs: Python 3.12+, Docker. See SETUP.md.
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 PY=$(command -v python3.12 || command -v python3)
 
@@ -35,4 +35,4 @@ echo "[6/6] Demo tenant and admin"
 python scripts/seed_dev_tenant.py
 
 echo
-echo "Setup done. Next: connect your accounts (SETUP.md), then run ./start.sh"
+echo "Setup done. Next: connect your accounts (SETUP.md), then run ./setup/start.sh"
