@@ -1,0 +1,4 @@
+# face_bot.py and the dev server. The face page itself has no dependencies.
+playwright>=1.56,<2
+websockets>=13,<16
+pytest>=8,<10

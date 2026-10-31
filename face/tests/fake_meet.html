@@ -1,0 +1,127 @@
+<!doctype html>
+<!-- A tiny stand-in for Google Meet's join flow, used only by the tests. It exposes the same
+     accessible names face_bot.py looks for, calls getUserMedia like Meet does, and sends the
+     tracks over a loopback RTCPeerConnection so the tests can inspect what "the meeting" receives.
+     Query params: ?deny=1 rejects the join, ?admit_ms=N delays admission, ?signed_in=1 hides the name box. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fake Meet</title>
+  </head>
+  <body>
+    <div id="popup"><p>New: captions in more languages</p><button>Got it</button></div>
+    <main id="prejoin">
+      <video id="preview" autoplay muted playsinline width="320" height="180"></video>
+      <input id="name" aria-label="Your name" placeholder="Your name" />
+      <button id="cam" aria-label="Turn on camera (ctrl + e)">cam</button>
+      <button id="mic" aria-label="Turn on microphone (ctrl + d)">mic</button>
+      <button id="join">Ask to join</button>
+    </main>
+    <main id="lobby" hidden><p>Asking to be let in...</p></main>
+    <main id="call" hidden>
+      <video id="remote" autoplay muted playsinline width="320" height="180"></video>
+      <button id="leave" aria-label="Leave call">leave</button>
+    </main>
+    <main id="done" hidden><p id="done-text"></p><button>Return to home screen</button></main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const $ = (id) => document.getElementById(id);
+      const state = { name: null, joinedAt: null, received: null, remoteLevel: 0, gumCalls: 0 };
+      window.fakeMeet = state;
+      if (params.get('signed_in') === '1') $('name').remove();
+      $('popup').querySelector('button').onclick = () => $('popup').remove();
+      for (const id of ['cam', 'mic']) {
+        $(id).onclick = () => {
+          const label = $(id).getAttribute('aria-label');
+          $(id).setAttribute('aria-label', label.replace('Turn on', 'Turn off'));
+        };
+      }
+
+      async function preview() {
+        state.gumCalls += 1;
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: true });
+        $('preview').srcObject = stream;
+        return stream;
+      }
+      preview();
+
+      $('join').onclick = () => {
+        state.name = $('name') ? $('name').value : 'signed-in';
+        state.camOn = $('cam').getAttribute('aria-label').startsWith('Turn off');
+        state.micOn = $('mic').getAttribute('aria-label').startsWith('Turn off');
+        $('prejoin').hidden = true;
+        $('lobby').hidden = false;
+        setTimeout(() => {
+          $('lobby').hidden = true;
+          if (params.get('deny') === '1') {
+            $('done').hidden = false;
+            $('done-text').textContent = 'Someone in the call denied your request to join';
+            return;
+          }
+          admit();
+        }, Number(params.get('admit_ms') || 1200));
+      };
+
+      async function admit() {
+        $('call').hidden = false;
+        state.joinedAt = performance.now();
+        state.gumCalls += 1;
+        const local = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const a = new RTCPeerConnection();
+        const b = new RTCPeerConnection();
+        a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+        b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+        const remote = new MediaStream();
+        b.ontrack = (e) => {
+          remote.addTrack(e.track);
+          $('remote').srcObject = remote;
+          if (e.track.kind === 'audio') listen(new MediaStream([e.track]));
+        };
+        for (const track of local.getTracks()) a.addTrack(track, local);
+        await a.setLocalDescription(await a.createOffer());
+        await b.setRemoteDescription(a.localDescription);
+        await b.setLocalDescription(await b.createAnswer());
+        await a.setRemoteDescription(b.localDescription);
+        state.pcs = [a, b];
+      }
+
+      // What the other participants would hear: level of the received audio track.
+      function listen(stream) {
+        const ctx = new AudioContext();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        const buf = new Float32Array(analyser.fftSize);
+        setInterval(() => {
+          analyser.getFloatTimeDomainData(buf);
+          let sum = 0;
+          for (const v of buf) sum += v * v;
+          state.remoteLevel = Math.max(state.remoteLevel * 0.9, Math.sqrt(sum / buf.length));
+        }, 20);
+      }
+
+      // What the other participants would see: received frame size and whether it has content.
+      window.receivedVideo = function () {
+        const video = $('remote');
+        if (!video.videoWidth) return null;
+        const c = document.createElement('canvas');
+        c.width = video.videoWidth;
+        c.height = video.videoHeight;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        const px = ctx.getImageData(0, 0, c.width, c.height).data;
+        let dark = 0;
+        for (let i = 0; i < px.length; i += 4 * 97) if (px[i] < 60 && px[i + 1] < 60) dark += 1;
+        return { width: c.width, height: c.height, darkSamples: dark };
+      };
+
+      $('leave').onclick = () => {
+        for (const pc of state.pcs || []) pc.close();
+        $('call').hidden = true;
+        $('done').hidden = false;
+        $('done-text').textContent = 'You left the meeting';
+        state.left = true;
+      };
+    </script>
+  </body>
+</html>

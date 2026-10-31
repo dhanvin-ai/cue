@@ -1,0 +1,16 @@
+# Bot browser profiles hold Google session cookies: never commit them.
+.profile/
+*.profile/
+chrome-profile/
+cue-face-guest-*/
+*.session
+storage_state*.json
+# Local secrets
+.env
+.env.*
+!.env.example
+# Test and capture output
+test-results/
+recordings/
+__pycache__/
+.pytest_cache/

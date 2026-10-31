@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cue · AI teammate</title>
+    <link rel="icon" href="assets/mark.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #fafaf7;
+        --ink: #0f100d;
+        --lime: #d9f25c;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--paper);
+        overflow: hidden;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        font-family: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      #face {
+        width: min(100vw, calc(100vh * 16 / 9));
+        height: auto;
+        aspect-ratio: 16 / 9;
+        display: block;
+      }
+      #unlock {
+        position: fixed;
+        bottom: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 20px;
+        background: var(--ink);
+        color: var(--paper);
+        font: 500 15px/1 inherit;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      #unlock[hidden] {
+        display: none;
+      }
+      #debug {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        margin: 0;
+        padding: 8px 10px;
+        max-width: 320px;
+        background: rgba(15, 16, 13, 0.85);
+        color: var(--lime);
+        font: 11px/1.35 ui-monospace, Menlo, monospace;
+        border-radius: 8px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="face" width="1280" height="720" aria-label="Cue, AI teammate"></canvas>
+    <button id="unlock" type="button" hidden>Click to turn on Cue's sound</button>
+    <!-- face_bot.py injects exactly these scripts, in this order, into Google Meet. -->
+    <script src="src/core.js"></script>
+    <script src="src/speech.js"></script>
+    <script src="src/mascot.js"></script>
+    <script src="src/overlay.js"></script>
+    <script src="src/app.js"></script>
+    <script src="src/mock.js"></script>
+    <script src="src/boot.js"></script>
+  </body>
+</html>
