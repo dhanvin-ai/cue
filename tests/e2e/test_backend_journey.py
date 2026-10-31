@@ -1,4 +1,4 @@
-"""Playwright API journey across the Phase 1–5 backend boundaries."""
+"""Playwright API journey across the backend: webhooks, ingestion, memory and access control."""
 
 import base64
 import hashlib

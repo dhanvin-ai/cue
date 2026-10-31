@@ -5,7 +5,7 @@ import pytest
 
 from cue.connectors.base import Tool
 from cue.runtime import tools
-from tests.test_phase6 import FakeGateway, make_task, migration_url, run, tenants  # noqa: F401
+from tests.test_agent_runtime import FakeGateway, make_task, migration_url, run, tenants  # noqa: F401
 
 
 class FakeConnector:

@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 from cue.meetings import bolna, service, store
 from cue.runtime.executor import ToolRegistry
-from tests.test_phase7 import AgentGateway, FakeBot, attendees, memory, tenants  # noqa: F401
+from tests.test_meetings import AgentGateway, FakeBot, attendees, memory, tenants  # noqa: F401
 
 
 def conversation(*turns: str) -> list[dict]:

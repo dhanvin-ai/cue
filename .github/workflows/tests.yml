@@ -41,7 +41,7 @@ jobs:
       - run: python scripts/migrate.py
       - run: python scripts/ensure_partitions.py
       - run: python scripts/ensure_partitions.py
-      - name: Phase 1–5 backend tests
-        run: pytest -q tests/test_phase*.py
+      - name: Backend tests
+        run: pytest -q tests/test_foundation.py tests/test_github_connector.py tests/test_ingestion.py tests/test_vendor_connectors.py tests/test_memory.py tests/test_agent_runtime.py tests/test_meetings.py tests/test_pilot_controls.py
       - name: Playwright API end-to-end tests
         run: pytest -q tests/e2e

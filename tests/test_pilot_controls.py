@@ -39,7 +39,7 @@ def tenants():
     slack, github = uuid4(), uuid4()
     team = f"T-{uuid4()}"
     with psycopg.connect(url) as database:
-        database.execute("INSERT INTO tenants (id, name) VALUES (%s, 'phase8-a'), (%s, 'phase8-b')",
+        database.execute("INSERT INTO tenants (id, name) VALUES (%s, 'pilot-a'), (%s, 'pilot-b')",
                          (a, b))
         database.execute(
             "INSERT INTO users (tenant_id, firebase_uid, role) VALUES "

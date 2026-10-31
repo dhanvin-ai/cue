@@ -134,21 +134,21 @@ groups that matter most:
 
 ```sh
 pytest -q                 # unit and integration (needs db + qdrant up)
-pytest tests/e2e -q       # API journeys over HTTP
+pytest -q tests/e2e       # API journeys over HTTP
 ```
 
-CI (`.github/workflows/tests.yml`) runs the same suites against service containers.
+See [testing.md](testing.md) for what each suite covers.
 
-## Deeper docs
+## Further reading
 
-Design notes, by subsystem:
-
-- [Connector framework](design/connector-contract.md) and [vendor connectors](design/vendor-connectors.md)
-- [Event pipeline](design/event-pipeline.md) and [memory and query routing](design/memory.md)
-- [Agent runtime and actions](design/agent-runtime.md) and [meeting voice](design/meeting-voice.md)
-- [Proactive work and pilot controls](design/proactive-and-controls.md)
-
-Operational notes:
-
-- [Attendee meeting bot](attendee.md), [Bolna phone voice](bolna.md), [local connectors](local-connectors.md)
-- [Console](frontend.md), [end-to-end tests](e2e-testing.md), [licensing](licensing.md)
+| Topic | Document |
+|---|---|
+| Connectors, credentials, ACLs and agent tools | [design/connectors.md](design/connectors.md) |
+| Event pipeline and replay | [design/event-pipeline.md](design/event-pipeline.md) |
+| Memory stores and query routing | [design/memory.md](design/memory.md) |
+| Agent runtime, policy and model gateway | [design/agent-runtime.md](design/agent-runtime.md) |
+| Meetings: Attendee, Bolna and Recall voice paths | [design/meetings.md](design/meetings.md) |
+| Proactive work and admin controls | [design/operations.md](design/operations.md) |
+| Web console | [console.md](console.md) |
+| Tests | [testing.md](testing.md) |
+| Licensing | [licensing.md](licensing.md) |

@@ -1,4 +1,4 @@
-"""Context builder: tenant- and ACL-filtered evidence from the Phase 5 memory layer."""
+"""Context builder: tenant- and ACL-filtered evidence from the memory layer."""
 
 import os
 
@@ -21,7 +21,7 @@ def channel_participants(database: psycopg.Connection, tenant_id, principal: str
 def build_context(tenant_id, requester: str, question: str, participants: list[str], *,
                   database_url: str | None = None, model=None, index=None, embedder=None,
                   fast: bool = False) -> dict:
-    """Return the Phase 5 answer plus citations for the planner.
+    """Return the memory answer plus citations for the planner.
 
     `query_memory` already intersects every participant's principals, so a shared
     Slack channel or meeting never widens access beyond the least-privileged member.

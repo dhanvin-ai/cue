@@ -9,7 +9,7 @@ import httpx
 
 from cue.meetings import attendee, service, store
 from cue.runtime.executor import ToolRegistry
-from tests.test_phase7 import AgentGateway, attendees, memory, tenants  # noqa: F401
+from tests.test_meetings import AgentGateway, attendees, memory, tenants  # noqa: F401
 
 
 def fake_client(calls):

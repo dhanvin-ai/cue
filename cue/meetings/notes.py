@@ -58,7 +58,7 @@ class GatewayNotesModel:
 
 
 class SingleActionGateway:
-    """Scripted planner that exercises the Phase 6 policy path for one action item."""
+    """Scripted planner that exercises the runtime policy path for one action item."""
 
     def __init__(self, tool: str, arguments: dict):
         self.tool = tool

@@ -191,7 +191,7 @@ def finish_reply(database: psycopg.Connection, tenant_id: UUID, reply_id: UUID, 
 
 def publish_memory(database: psycopg.Connection, tenant_id: UUID, meeting: dict,
                    segments: list[dict], note: dict) -> None:
-    """Publish transcript and notes into the Phase 5 memory layer with meeting ACLs."""
+    """Publish transcript and notes into the memory layer with meeting ACLs."""
     meeting_id = meeting["id"]
     visibility, principals = meeting["visibility"], sorted(set(meeting["principals"]))
     for segment in segments:
