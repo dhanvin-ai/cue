@@ -2,6 +2,8 @@
 
 Cue is an AI teammate for software teams, being developed for the Bolna AI Buildathon.
 
+**Get started:** [SETUP.md](SETUP.md) (install, connectors, GCP) · [docs/GUIDE.md](docs/GUIDE.md) (how it works end to end). Windows: `setup.bat` then `start.bat`. macOS/Linux: `./setup.sh` then `./start.sh`.
+
 The product concept is an agent with its own team identity that can answer questions about work, participate in meetings when addressed, track decisions and action items, and carry out approved actions across tools. The first planned integrations are Google Workspace, Slack, GitHub, meetings, and a project tracker.
 
 This repository is private. It contains the Phase 1 FastAPI foundation, the [Phase 2 connector setup](docs/phase2-connectors.md), the [Phase 3 event pipeline](docs/phase3-ingestion.md), the [Phase 4 v1 connectors](docs/phase4-connectors.md), the [Phase 5 memory layer](docs/phase5-memory.md), the [Phase 6 agent runtime](docs/phase6.md), the [Phase 7 meeting voice](docs/phase7.md), the [Phase 8 proactive and pilot controls](docs/phase8.md), a browser console for testing it all at [`GET /ui`](docs/frontend.md), and a [license decision guide](docs/licensing.md).

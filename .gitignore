@@ -11,3 +11,4 @@ snapshots/
 
 .exvisit/
 .secrets/
+.tunnel.log
