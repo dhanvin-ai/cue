@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from cue.http import tls_context
 from cue.meetings import addressing as addressing_module
 from cue.meetings import service, store
 from cue.meetings.models import TranscriptSegment, Turn
@@ -156,7 +157,7 @@ class BolnaClient:
     """Provisioning calls against the Bolna REST API."""
 
     def __init__(self, api_key: str, client: httpx.Client | None = None):
-        self.client = client or httpx.Client(base_url=API, timeout=30,
+        self.client = client or httpx.Client(verify=tls_context(), base_url=API, timeout=30,
                                              headers={"Authorization": f"Bearer {api_key}"})
 
     def add_custom_model(self, name: str, base_url: str, key: str) -> dict:

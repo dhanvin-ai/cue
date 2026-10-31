@@ -89,7 +89,9 @@ def _retry_or_fail(database, tenant_id, task: dict, attempts: int, moment: datet
 
 
 def run_task(tenant_id, task_id, *, gateway, registry: ToolRegistry, database_url: str | None = None,
-             outbound=None, memory=None, queue=None, now: datetime | None = None) -> dict:
+             outbound=None, memory=None, queue=None, now: datetime | None = None,
+             on_text=None) -> dict:
+    """`on_text` streams a spoken reply as the model writes it (meetings); see plan_streaming."""
     moment = now or datetime.now(timezone.utc)
     with store.tenant_connection(tenant_id, database_url) as database:
         task = store.get_task(database, tenant_id, task_id)
@@ -132,7 +134,12 @@ def run_task(tenant_id, task_id, *, gateway, registry: ToolRegistry, database_ur
             return snapshot(store.get_task(database, tenant_id, task_id), approvals)
 
         try:
-            plan = planner.plan(gateway, task["request_text"], context, registry.catalog())
+            if on_text is not None and hasattr(gateway, "_route"):
+                plan = planner.plan_streaming(gateway, task["request_text"], context,
+                                              registry.catalog(), on_text)
+            else:
+                plan = planner.plan(gateway, task["request_text"], context, registry.catalog(),
+                                    spoken=task["source"] == "meeting")
         except (planner.PlanError, ModelUnavailable) as exc:
             return _retry_or_fail(database, tenant_id, task, attempts, moment, str(exc), queue)
         store.set_status(database, tenant_id, task_id, "running", plan=plan_record(plan))
@@ -189,7 +196,7 @@ def run_task(tenant_id, task_id, *, gateway, registry: ToolRegistry, database_ur
             results.append({"tool": call.name, "result": result})
 
         answer = plan.reply if not results else responder.compose(
-            gateway, task["request_text"], context, results)
+            gateway, task["request_text"], context, results, spoken=task["source"] == "meeting")
         return _finish(database, tenant_id, task, answer, outbound, moment)
 
 

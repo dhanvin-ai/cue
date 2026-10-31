@@ -1,9 +1,9 @@
-/* Cue teammate console — talks to the FastAPI backend over /v1/tenants/{tenant}/... */
+/* Cue console: meetings, chat, memory, activity and settings over /v1/tenants/{tenant}/... */
 (() => {
   "use strict";
 
   const TENANT = window.__CUE_TENANT__;
-  const UID = window.__CUE_UID__;
+  const UID = window.__CUE_UID__ || "";
 
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => {
@@ -12,996 +12,889 @@
     if (text !== undefined && text !== null) node.textContent = String(text);
     return node;
   };
-  const pretty = (value) =>
-    typeof value === "string" ? value : JSON.stringify(value, null, 2);
 
-  function whenVisible(callback) {
-    if (document.visibilityState === "visible") callback();
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") callback();
-    });
+  /* ---------------------------------------------------------------- icons -- */
+  // One stroke family for every glyph, so the rail, sources and settings read as a set.
+  const PATHS = {
+    meetings: "M3 7a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM16 10l5-3v10l-5-3",
+    chat: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z",
+    memory: "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6",
+    activity: "M9 11l3 3 8-8M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9",
+    settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
+    github: "M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9",
+    gmail: "M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM3 7l9 6 9-6",
+    calendar: "M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM16 3v4M8 3v4M3 11h18",
+    calendly: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
+    meeting: "M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM19 11a7 7 0 0 1-14 0M12 18v3",
+    sparkle: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z",
+    search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3",
+    shield: "M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z",
+    end: "M6 6l12 12M18 6L6 18",
+    slack: "M9 3v18M15 3v18M3 9h18M3 15h18",
+    jira: "M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4zM14 5v12",
+    n8n: "M6 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM9 12h3l3-6M12 12l3 6",
+    zapier: "M13 2L4 14h7l-1 8 9-12h-7z",
+    notion: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6",
+    apollo: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
+    asana: "M12 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
+  };
+  function icon(name) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.8");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", PATHS[name] || PATHS.sparkle);
+    svg.appendChild(path);
+    return svg;
   }
+  const SOURCE_ICON = { github: "github", gmail: "gmail", calendar: "calendar", calendly: "calendly", meeting: "meeting" };
+  const SOURCE_NAME = { github: "GitHub", gmail: "Gmail", calendar: "Calendar", calendly: "Calendly", meeting: "Meeting" };
 
-  /* ---------------------------------------------------------------- api ---- */
+  /* ------------------------------------------------------------------ api -- */
   async function api(path, options = {}) {
     const response = await fetch(`/v1/tenants/${TENANT}${path}`, {
-      ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     });
-    const type = response.headers.get("content-type") || "";
-    if (!type.includes("json")) {
-      const text = await response.text();
-      if (!response.ok) throw new Error(describe(response.status, text));
-      return text;
+    const body = (response.headers.get("content-type") || "").includes("json")
+      ? await response.json() : await response.text();
+    if (!response.ok) {
+      const detail = typeof body === "object" ? body.detail : body;
+      throw new Error(explain(response.status, detail));
     }
-    const body = await response.json();
-    if (!response.ok) throw new Error(describe(response.status, body.detail));
     return body;
   }
 
-  // FastAPI reports most failures as {detail}; a 500 from an unhandled error
-  // does not, so say what the status means instead of showing nothing.
-  function describe(status, detail) {
-    const clean = typeof detail === "string" ? detail : JSON.stringify(detail)
-    if (clean && clean !== "undefined") return `${status}: ${clean}`;
-    const fallback = {
-      401: "Not signed in — the dev auth bypass is off, so this page cannot authenticate.",
-      403: "Your role is not allowed to do this.",
-      404: "Not found.",
-      500: "The server failed handling this request. Check the API log; agent answers and memory queries need a working model gateway.",
-    };
-    return `${status}: ${fallback[status] || "Request failed."}`;
+  function explain(status, detail) {
+    if (typeof detail === "string" && detail && status !== 500) return detail;
+    return {
+      401: "You're signed out. The local console needs CUE_DEV_AUTH_UID set on the API.",
+      403: "Your role doesn't allow that.",
+      404: "That's no longer there.",
+      500: "The server hit an error. Check the API log; answers need a working model gateway.",
+    }[status] || `Request failed (${status}).`;
   }
 
-  /* -------------------------------------------------------------- config -- */
-  // The runtime needs an inference endpoint and a worker. Both are read from
-  // the live API rather than assumed, so the banner never lies about status.
-  const Runtime = {
-    gateway: false,
-    gatewayUrl: window.__CUE_GATEWAY_URL__ || "",
-    gatewayKey: Boolean(window.__CUE_GATEWAY_KEY__),
-    workerIdleSeconds: 90,
-  };
+  function toast(message, bad = false) {
+    const node = el("div", `toast${bad ? " bad" : ""}`, message);
+    $("toasts").appendChild(node);
+    setTimeout(() => node.remove(), 5000);
+  }
 
-  const TIERS = [
-    { tier: 0, name: "read", mode: "auto", note: "Runs freely inside the asker's permissions." },
-    { tier: 1, name: "internal reversible", mode: "auto", note: "Runs automatically and is logged." },
-    { tier: 2, name: "internal visible", mode: "approve", note: "Needs one click of confirmation." },
-    { tier: 3, name: "external", mode: "approve", note: "Always approved explicitly in v1." },
-    { tier: 4, name: "prohibited", mode: "deny", note: "Never available to the agent." },
+  // Answers arrive as light markdown with [n] citation marks; render bold, drop the marks.
+  function prose(text, cls = "body") {
+    const node = el("div", cls);
+    const clean = String(text || "").replace(/\s*\[\d+(?:,\s*\d+)*\]/g, "").replace(/^\s*[-*]\s+/gm, "• ");
+    clean.split(/\*\*(.+?)\*\*/g).forEach((part, i) => {
+      node.appendChild(i % 2 ? el("strong", null, part) : document.createTextNode(part));
+    });
+    return node;
+  }
+
+  /* ---------------------------------------------------------------- time --- */
+  function ago(iso) {
+    if (!iso) return "";
+    const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 45) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    if (s < 86400 * 7) return `${Math.round(s / 86400)}d ago`;
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function clock(iso, start) {
+    if (!iso) return "";
+    const s = Math.max(0, Math.round((new Date(iso) - new Date(start || iso)) / 1000));
+    const pad = (n) => String(n).padStart(2, "0");
+    return s >= 3600 ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`
+      : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+  }
+  function stamp(iso) {
+    return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+  }
+
+  /* ---------------------------------------------------------------- shell -- */
+  const VIEWS = [
+    { id: "meetings", label: "Meetings", sub: "What Cue heard and said in your calls." },
+    { id: "chat", label: "Chat", sub: "Ask Cue outside a meeting." },
+    { id: "memory", label: "Memory", sub: "Everything Cue can draw on, searchable." },
+    { id: "activity", label: "Activity", sub: "Actions Cue took, and the ones waiting on you." },
+    { id: "settings", label: "Settings", sub: "Accounts and how Cue behaves." },
   ];
+  const state = { view: "meetings", meetings: [], meetingId: null, timer: null, mode: "agent", polls: new Map() };
 
-  const NAV = [
-    { id: "ask", label: "Ask Cue", title: "Ask Cue", sub: "Send work to the agent runtime and watch it run.", icon: "M8 1h8a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4H7l-3 3v-9a4 4 0 0 1 4-4z" },
-    { id: "approvals", label: "Approvals", title: "Approvals", sub: "Tier 2 and 3 actions waiting on a human decision.", badge: true, icon: "M12 2 4 5v6c0 5 3.4 8.6 8 11 4.6-2.4 8-6 8-11V5l-8-3zm-1 13-3.5-3.5 1.4-1.4L11 12.2l4.6-4.6 1.4 1.4L11 15z" },
-    { id: "memory", label: "Memory", title: "Team memory", sub: "Permissioned retrieval across every connected source.", icon: "M12 3a9 9 0 0 0-9 9 9 9 0 0 0 4 7.5V21h10v-1.5A9 9 0 0 0 21 12a9 9 0 0 0-9-9z" },
-    { id: "tasks", label: "Tasks", title: "Agent tasks", sub: "Every request the runtime has taken, newest first.", icon: "M4 4h16v5H4zM4 11h16v5H4zM4 18h10v3H4z" },
-    { id: "meetings", label: "Meetings", title: "Meetings", sub: "Join by voice, then read the notes Cue writes afterwards.", icon: "M12 3a4 4 0 0 1 4 4v4a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4zm7 8a7 7 0 0 1-6 6.9V22h-2v-4.1A7 7 0 0 1 5 11h2a5 5 0 0 0 10 0h2z" },
-    { id: "proactive", label: "Proactive", title: "Proactive work", sub: "Digests, reminders and follow-ups Cue runs on a schedule.", icon: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 10.6 4 2.3-1 1.7-5-2.9V6h2v6.6z" },
-    { id: "admin", label: "Admin", title: "Tenant admin", sub: "Status, controls, access report and audit trail.", icon: "M12 2 3 6v6c0 5 3.8 9.4 9 10 5.2-.6 9-5 9-10V6l-9-4zm0 6a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zm0 8c1.9 0 3.6-.7 4.8-1.9-.9-1.4-2.8-2.1-4.8-2.1s-3.9.7-4.8 2.1A5.8 5.8 0 0 0 12 16z" },
-  ];
-
-  const state = { view: "ask", role: "member", tasks: [], polls: new Map() };
-
-  /* --------------------------------------------------------------- shell --- */
-  function buildNav() {
-    const nav = $("nav");
-    for (const item of NAV) {
-      const button = el("button", "nav-item");
-      button.dataset.pane = item.id;
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("fill", "currentColor");
-      svg.appendChild(el("path"));
-      svg.firstChild.setAttribute("d", item.icon);
-      button.append(svg, el("span", null, item.label));
-      if (item.badge) button.appendChild(el("span", "badge", "0"));
-      button.onclick = () => show(item.id);
-      nav.appendChild(button);
+  function buildRail() {
+    for (const view of VIEWS) {
+      const button = el("button", "rail-btn");
+      button.dataset.view = view.id;
+      button.setAttribute("aria-label", view.label);
+      button.append(icon(view.id), el("span", "tip", view.label), el("span", "dot"));
+      button.onclick = () => show(view.id);
+      $("nav").appendChild(button);
     }
+    $("me").textContent = (UID.replace(/[^a-z]/gi, "")[0] || "Y").toUpperCase();
+    $("me").title = UID || "You";
   }
 
   function show(id) {
     state.view = id;
-    const item = NAV.find((entry) => entry.id === id);
-    for (const node of document.querySelectorAll(".nav-item"))
-      node.classList.toggle("active", node.dataset.pane === id);
-    for (const pane of document.querySelectorAll(".pane"))
-      pane.classList.toggle("active", pane.dataset.pane === id);
-    $("viewTitle").textContent = item.title;
-    $("viewSub").textContent = item.sub;
-    renderRuntimeBanner();
-    if (id === "approvals") loadApprovals();
-    if (id === "tasks") loadTasks();
-    if (id === "proactive") loadProactive();
-    if (id === "admin") loadAdmin();
+    const view = VIEWS.find((v) => v.id === id);
+    for (const b of document.querySelectorAll(".rail-btn")) {
+      b.classList.toggle("active", b.dataset.view === id);
+      b.toggleAttribute("aria-current", b.dataset.view === id);
+    }
+    for (const v of document.querySelectorAll(".view")) v.classList.toggle("active", v.dataset.view === id);
+    $("title").textContent = view.label;
+    $("subtitle").textContent = view.sub;
+    $("topActions").replaceChildren();
+    try { localStorage.setItem("cue.view", id); } catch (_) { /* storage is optional */ }
+    history.replaceState(null, "", `#${id}`);
+    if (id === "meetings") { state.live = null; loadMeetings(); }
+    else stopLive();
+    if (id === "memory") $("memQ").focus();
+    if (id === "chat") $("ask").focus();
+    if (id === "activity") loadActivity();
+    if (id === "settings") loadSettings();
   }
 
-  function setDot(dotId, textId, level, text) {
-    $(dotId).className = `dot ${level}`;
-    $(textId).textContent = text;
+  /* ------------------------------------------------------------- meetings -- */
+  const AVATAR_TONES = ["#5144d9", "#1f9fd6", "#d0567a", "#1f9a72", "#c9781b", "#7b4fd1"];
+  function avatar(name, isCue) {
+    const node = el("div", "avatar");
+    if (isCue) {
+      node.style.background = "#fff";
+      const img = el("img");
+      img.src = "/ui/mascot/idle.png";
+      img.alt = "";
+      node.appendChild(img);
+      return node;
+    }
+    const label = (name || "?").trim();
+    let hash = 0;
+    for (const ch of label) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    node.style.background = AVATAR_TONES[hash % AVATAR_TONES.length];
+    node.textContent = label.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+    return node;
   }
 
-  function renderRuntimeBanner() {
-    const holder = $("runtimeBanner");
-    holder.textContent = "";
-    const problems = [];
-    if (!Runtime.gatewayUrl)
-      problems.push({ level: "bad", text: "MODEL_GATEWAY_BASE_URL is not set, so the agent cannot plan or answer. Point it at an OpenAI-compatible endpoint." });
-    else if (!Runtime.gatewayKey)
-      problems.push({ level: "warn", text: `Model gateway is configured (${Runtime.gatewayUrl}) but no API key is loaded, so inference calls will be rejected. Set MODEL_GATEWAY_API_KEY in .env.` });
-    if (state.workerStale)
-      problems.push({ level: "warn", text: "Tasks are sitting queued with no worker picking them up. Run `python scripts/run_tasks.py` to execute them." });
-    for (const problem of problems) holder.appendChild(el("div", `banner ${problem.level}`, problem.text));
+  function meetingTitle(m) {
+    if (m.title) return m.title;
+    const code = (m.meeting_url || "").split("/").pop();
+    return code ? `Meet · ${code}` : "Untitled call";
   }
 
-  async function checkRuntime() {
+  async function loadMeetings() {
+    let meetings;
     try {
-      const health = await fetch("/healthz").then((r) => r.json());
-      setDot("apiDot", "apiText", health.status === "ok" ? "ok" : "warn", health.status);
-    } catch {
-      setDot("apiDot", "apiText", "bad", "unreachable");
+      ({ meetings } = await api("/meetings"));
+    } catch (error) {
+      $("meetList").replaceChildren(el("div", "empty", error.message));
       return;
     }
-    // The browser cannot test inference: the gateway needs the server-side API
-    // key and sends no CORS headers. Report what the server was configured with.
-    Runtime.gateway = Boolean(Runtime.gatewayUrl && Runtime.gatewayKey);
-    renderRuntimeBanner();
+    state.meetings = meetings;
+    renderMeetingList();
+    if (!state.meetingId || !meetings.some((m) => m.id === state.meetingId)) {
+      const live = meetings.find((m) => m.status === "live") || meetings[0];
+      state.meetingId = live ? live.id : null;
+    }
+    if (state.meetingId) openMeeting(state.meetingId);
+    else renderWelcome();
   }
 
-  /* ---------------------------------------------------------------- ask ---- */
-  function citationBlock(citations) {
-    const box = el("div", "cite-list");
-    box.appendChild(el("div", "hint", `${citations.length} source${citations.length === 1 ? "" : "s"}`));
-    for (const cite of citations) {
-      const line = el("div", "cite");
-      line.append(el("span", "src", `[${cite.number}] ${cite.source || cite.summary_start || ""} ${cite.type || ""}`));
-      if (cite.url) {
-        line.append(document.createTextNode(" — "));
-        line.appendChild(el("a", null, "open source")).setAttribute("href", cite.url);
-        line.lastChild.target = "_blank";
+  function renderMeetingList() {
+    const holder = $("meetList");
+    holder.replaceChildren();
+    const groups = [["Live now", (m) => m.status !== "ended"], ["Earlier", (m) => m.status === "ended"]];
+    for (const [label, test] of groups) {
+      const items = state.meetings.filter(test);
+      if (!items.length) continue;
+      holder.appendChild(el("h2", null, label));
+      for (const m of items) {
+        const item = el("button", `meet-item${m.id === state.meetingId ? " active" : ""}`);
+        item.appendChild(el("span", "t", meetingTitle(m)));
+        const meta = el("span", "m");
+        if (m.status === "live") meta.appendChild(el("span", "tag live", "Live"));
+        else if (m.status === "joining") meta.appendChild(el("span", "tag warn", "Waiting to be let in"));
+        meta.appendChild(el("span", null,
+          `${ago(m.started_at || m.created_at)} · ${m.replies} answer${m.replies === 1 ? "" : "s"}`));
+        item.appendChild(meta);
+        item.onclick = () => {
+          if (m.id === state.meetingId) return;
+          state.meetingId = m.id;
+          state.live = null;
+          renderMeetingList();
+          openMeeting(m.id);
+        };
+        holder.appendChild(item);
       }
-      const body = (cite.text || "").slice(0, 260);
-      if (body) line.appendChild(el("div", null, body));
-      box.appendChild(line);
     }
+  }
+
+  function renderWelcome() {
+    state.live = null;
+    stopLive();
+    const box = el("div", "welcome");
+    const img = el("img", "art");
+    img.src = "/ui/mascot/hero.png";
+    img.alt = "";
+    box.append(img, el("h2", null, "Bring Cue into your next call"),
+      el("p", "muted", "Paste a Google Meet link on the left. Cue joins as a participant, listens, and answers when someone says “Hey Cue”."));
+    $("stage").replaceChildren(box);
+    $("side").replaceChildren(cueCard("idle", "Ready when you are", "Not in a call right now."));
+  }
+
+  function stopLive() {
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+    if (state.inflight) state.inflight.abort();
+    state.inflight = null;
+  }
+
+  const POLL_MS = 2000;
+
+  // Polls the open meeting. One request at a time, none while the tab is hidden, and the
+  // DOM is reconciled rather than rebuilt, so the transcript never flickers or loses scroll.
+  async function openMeeting(id) {
+    stopLive();
+    if (state.live && state.live.id !== id) state.live = null;
+    if (document.hidden) {
+      state.timer = setTimeout(() => openMeeting(id), POLL_MS);
+      return;
+    }
+    const controller = new AbortController();
+    state.inflight = controller;
+    let data;
+    try {
+      data = await api(`/meetings/${id}/timeline`, { signal: controller.signal });
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      if (!state.live) $("stage").replaceChildren(el("div", "empty", error.message));
+      state.timer = setTimeout(() => openMeeting(id), POLL_MS * 2);
+      return;
+    } finally {
+      if (state.inflight === controller) state.inflight = null;
+    }
+    if (id !== state.meetingId || state.view !== "meetings") return;
+    renderStage(data.meeting, data.entries);
+    if (data.meeting.status !== "ended") state.timer = setTimeout(() => openMeeting(id), POLL_MS);
+  }
+
+  // What Cue is doing right now, read from the shape of the conversation.
+  function cueMood(meeting, entries) {
+    if (meeting.status === "ended") return ["idle", "Off the call", "Notes are under the transcript."];
+    if (meeting.status === "joining") return ["idle", "Waiting in the lobby", "Admit Cue from the Meet window."];
+    const last = entries[entries.length - 1];
+    const age = last ? (Date.now() - new Date(last.at).getTime()) / 1000 : Infinity;
+    if (last && last.kind === "cue" && age < 12) return ["talking", "Answering out loud", "Sources are on the reply."];
+    const asked = last && last.kind === "speech" && /\bcue\b|\?\s*$/i.test(last.text);
+    if (asked && age < 20) return ["thinking", "Looking it up…", "Checking GitHub, email and calendar."];
+    return ["idle", "Listening", "Say “Hey Cue” followed by a question."];
+  }
+
+  const entryKey = (e) => `${e.kind}|${e.at}|${e.speaker_id}|${e.text}`;
+  const setText = (node, text) => { if (node.textContent !== String(text)) node.textContent = text; };
+
+  // Builds the parts of the stage that only change when another meeting is opened or its
+  // status changes; everything else is patched in place by renderStage.
+  function buildStage(meeting) {
+    const actions = $("topActions");
+    actions.replaceChildren();
+    if (meeting.status !== "ended") {
+      const end = el("button", "btn", "End & write notes");
+      end.prepend(icon("end"));
+      end.onclick = () => endMeeting(meeting.id, end);
+      actions.appendChild(end);
+    }
+    const head = el("div", "stage-head");
+    head.appendChild(el("h2", null, meetingTitle(meeting)));
+    if (meeting.status === "live") head.appendChild(el("span", "tag live", "Live"));
+    if (meeting.status === "joining") head.appendChild(el("span", "tag warn", "Waiting to be let in"));
+    if (meeting.status === "ended") head.appendChild(el("span", "tag", "Ended"));
+    const list = el("div", "transcript");
+    list.setAttribute("aria-live", "polite");
+    const empty = el("div", "empty", meeting.status === "ended"
+      ? "Nothing was said while Cue was in this call." : "Captions will appear here as people talk.");
+    list.appendChild(empty);
+    $("stage").replaceChildren(head, list);
+    if (meeting.status === "ended") $("stage").appendChild(notesBlock(meeting.id));
+
+    const card = el("div", "cue-card");
+    const poseBox = el("div", "pose");
+    const poses = {};
+    for (const name of ["idle", "thinking", "talking"]) {
+      const img = el("img", "art");
+      img.src = `/ui/mascot/${name}.png`;
+      img.alt = "";
+      poses[name] = img;
+      poseBox.appendChild(img);
+    }
+    const headline = el("div", "state");
+    const sub = el("div", "state-sub");
+    card.append(poseBox, headline, sub);
+    const facts = el("dl", "facts");
+    const fact = {};
+    for (const [key, label] of [["started", "Started"], ["duration", "Duration"],
+      ["people", "People heard"], ["answers", "Questions answered"]]) {
+      const row = el("div");
+      fact[key] = el("span");
+      row.append(el("dt", null, label), fact[key]);
+      facts.appendChild(row);
+    }
+    $("side").replaceChildren(card, facts);
+    return { id: meeting.id, status: meeting.status, list, empty, nodes: new Map(), keys: [],
+      poses, pose: null, headline, sub, fact, painted: false };
+  }
+
+  function lineNode(entry, start, fresh) {
+    const isCue = entry.kind === "cue";
+    const line = el("div", `line${isCue ? " cue" : ""}${fresh ? " fresh" : ""}`);
+    const body = el("div");
+    body.append(el("div", "who", isCue ? "Cue" : entry.speaker), el("div", "said", entry.text));
+    line.append(avatar(entry.speaker, isCue), body, el("div", "at", clock(entry.at, start)));
+    return line;
+  }
+
+  function renderStage(meeting, entries) {
+    let live = state.live;
+    if (!live || live.id !== meeting.id || live.status !== meeting.status) {
+      live = state.live = buildStage(meeting);
+    }
+    const { list } = live;
+    const start = meeting.started_at || (entries[0] && entries[0].at);
+    const keys = entries.map(entryKey);
+    const changed = keys.length !== live.keys.length || keys.some((k, i) => k !== live.keys[i]);
+
+    if (changed) {
+      const pinned = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+      const wanted = new Set(keys);
+      for (const [key, node] of live.nodes) {
+        if (!wanted.has(key)) { node.remove(); live.nodes.delete(key); }
+      }
+      live.empty.hidden = entries.length > 0;
+      // Walk in order: reuse each line, create only new ones, and move a node only when a
+      // late caption landed before it.
+      let cursor = live.empty.nextSibling;
+      entries.forEach((entry, index) => {
+        const key = keys[index];
+        let node = live.nodes.get(key);
+        if (!node) {
+          node = lineNode(entry, start, live.painted);
+          live.nodes.set(key, node);
+        }
+        if (node !== cursor) list.insertBefore(node, cursor);
+        else cursor = cursor.nextSibling;
+        node.classList.toggle("old", index < entries.length - 6);
+        const who = node.querySelector(".who");
+        const asked = entry.kind === "speech" && /\bcue\b/i.test(entry.text)
+          && entries[index + 1] && entries[index + 1].kind === "cue";
+        const mark = who.querySelector(".ask-mark");
+        if (asked && !mark) who.appendChild(el("span", "ask-mark", "asked Cue"));
+        if (!asked && mark) mark.remove();
+      });
+      live.keys = keys;
+      if (pinned || !live.painted) list.scrollTop = list.scrollHeight;
+    }
+    live.painted = true;
+
+    // The mood depends on the clock as well as the entries, so it is re-read every poll.
+    const [pose, headline, sub] = cueMood(meeting, entries);
+    if (pose !== live.pose) {
+      for (const [name, img] of Object.entries(live.poses)) {
+        img.classList.toggle("on", name === pose);
+        img.alt = name === pose ? `Cue: ${headline}` : "";
+      }
+      live.pose = pose;
+    }
+    setText(live.headline, headline);
+    setText(live.sub, sub);
+    setText(live.fact.started, meeting.started_at ? stamp(meeting.started_at) : "Not yet");
+    setText(live.fact.duration, entries.length ? clock(entries[entries.length - 1].at, start) : "00:00");
+    setText(live.fact.people, new Set(entries.filter((e) => e.kind === "speech").map((e) => e.speaker)).size);
+    setText(live.fact.answers, entries.filter((e) => e.kind === "cue").length);
+  }
+
+  function notesBlock(meetingId) {
+    const box = el("div", "notes");
+    box.appendChild(el("p", "muted", "Loading notes…"));
+    api(`/meetings/${meetingId}/notes`).then((data) => {
+      const note = data.note || data;
+      box.replaceChildren();
+      box.appendChild(el("h4", null, "Summary"));
+      box.appendChild(el("p", null, note.summary || "No summary."));
+      if ((note.decisions || []).length) {
+        box.appendChild(el("h4", null, "Decisions"));
+        const ul = el("ul");
+        for (const d of note.decisions) ul.appendChild(el("li", null, typeof d === "string" ? d : d.text));
+        box.appendChild(ul);
+      }
+      if ((note.action_items || []).length) {
+        box.appendChild(el("h4", null, "Action items"));
+        const ul = el("ul");
+        for (const item of note.action_items) {
+          const li = el("li", null, item.text || item);
+          const extra = [item.owner, item.due && `due ${item.due}`].filter(Boolean).join(" · ");
+          if (extra) li.appendChild(el("small", null, extra));
+          ul.appendChild(li);
+        }
+        box.appendChild(ul);
+      }
+    }).catch(() => {
+      box.replaceChildren(el("p", "muted", "No notes for this meeting yet."));
+    });
     return box;
   }
 
-  function taskBubble(task) {
-    const bubble = el("div", "bubble agent");
-    bubble.dataset.taskId = task.task_id;
-    const meta = el("div", "meta");
-    meta.append(el("span", `pill ${task.status}`, task.status));
-    meta.append(el("span", null, `${task.source} · ${task.task_id.slice(0, 8)} · attempt ${task.attempts}`));
-    const body = el("div", "txt");
-    bubble.append(meta, body);
-    const planBox = el("div");
-    bubble.appendChild(planBox);
-    const errBox = el("div", "err");
-    errBox.hidden = true;
-    bubble.appendChild(errBox);
-    const approvalBox = el("div");
-    bubble.appendChild(approvalBox);
-    bubble._render = () => paintTask(bubble, task);
-    paintTask(bubble, task);
-    return bubble;
-  }
-
-  // A queued task that already carries a dispatch stamp was handed to a worker
-  // that never reported back, so no scheduler tick will offer it again.
-  function isStranded(task) {
-    if (task.status !== "queued" || !task.dispatched_at) return false;
-    return Date.now() - new Date(task.dispatched_at).getTime() > 60_000;
-  }
-
-  function paintTask(bubble, task) {
-    bubble.dataset.task = JSON.stringify(task);
-    const pill = bubble.querySelector(".pill");
-    pill.className = `pill ${task.status}`;
-    pill.textContent = task.status;
-    bubble.querySelector(".meta span:nth-child(2)").textContent =
-      `${task.source} · ${task.task_id.slice(0, 8)} · attempt ${task.attempts}`;
-    const body = bubble.querySelector(".txt");
-    body.textContent = task.answer || task.request_text || "";
-    const planBox = bubble.children[3];
-    planBox.textContent = "";
-    if (task.plan && (task.plan.tool_calls || []).length) {
-      const details = el("details");
-      details.appendChild(el("summary", null, `planned ${task.plan.tool_calls.length} tool call(s) · ${task.plan.provider || ""}`));
-      const list = el("pre");
-      list.textContent = pretty(task.plan.tool_calls);
-      details.appendChild(list);
-      planBox.appendChild(details);
-    }
-    const errBox = bubble.querySelector(".err");
-    errBox.hidden = !task.error;
-    errBox.textContent = task.error || "";
-    const approvalBox = bubble.children[4];
-    if (isStranded(task)) {
-      const notice = el("div", "banner warn", "Dispatched but not executed — the worker may have been stopped.");
-      const retry = el("button", "btn ghost small", "Requeue task");
-      retry.style.marginLeft = "8px";
-      retry.onclick = async () => {
-        retry.disabled = true;
-        try {
-          await api(`/agent/tasks/${task.task_id}/requeue`, { method: "POST" });
-          refreshTask(task.task_id);
-          pollTask(task.task_id);
-        } catch (error) {
-          retry.disabled = false;
-          flashError(error.message);
-        }
-      };
-      notice.appendChild(retry);
-      approvalBox.replaceChildren(notice);
-      return;
-    }
-    renderApprovalRows(approvalBox, task.approvals || [], () => refreshTask(task.task_id));
-  }
-
-  function renderApprovalRows(holder, approvals, onChange) {
-    if (!holder) return;
-    holder.textContent = "";
-    for (const approval of approvals) {
-      const row = el("div", "row");
-      row.style.marginTop = "8px";
-      row.append(el("span", `pill ${approval.status}`, approval.status));
-      row.append(el("code", null, approval.tool));
-      row.append(el("span", "hint", `tier ${approval.tier}`));
-      if (approval.status === "pending") {
-        for (const [label, cls, approve] of [["Approve", "btn ok small", true], ["Reject", "btn danger small", false]]) {
-          const button = el("button", cls, label);
-          button.onclick = async () => {
-            button.disabled = true;
-            await decide(approval.id, approve);
-            onChange();
-          };
-          row.appendChild(button);
-        }
-      }
-      holder.appendChild(row);
-      if (Object.keys(approval.arguments || {}).length) {
-        const args = el("pre");
-        args.style.maxHeight = "140px";
-        args.textContent = pretty(approval.arguments);
-        holder.appendChild(args);
-      }
-    }
-  }
-
-  async function decide(approvalId, approve) {
+  async function joinMeeting(event) {
+    event.preventDefault();
+    let url = $("joinUrl").value.trim();
+    if (!url) return;
+    if (!/^https?:\/\//.test(url)) url = `https://${url}`;
+    $("joinBtn").disabled = true;
+    $("joinBtn").textContent = "Sending…";
     try {
-      await api(`/agent/approvals/${approvalId}`, {
-        method: "POST", body: JSON.stringify({ approve }),
+      const result = await api("/meetings", {
+        method: "POST",
+        body: JSON.stringify({ meeting_url: url, title: $("joinTitle").value.trim() || null, voice: "attendee" }),
       });
+      toast("Cue is on its way. Admit it from the Meet window.");
+      $("joinUrl").value = "";
+      $("joinTitle").value = "";
+      state.meetingId = result.meeting_id;
+      loadMeetings();
     } catch (error) {
-      flashError(error.message);
-    }
-  }
-
-  function stopPoll(taskId) {
-    const timer = state.polls.get(taskId);
-    if (timer) { clearTimeout(timer); state.polls.delete(taskId); }
-  }
-
-  function pollTask(taskId) {
-    stopPoll(taskId);
-    const timer = setTimeout(async () => {
-      if (!state.polls.has(taskId)) return;
-      const task = await refreshTask(taskId);
-      if (task && ["queued", "running", "awaiting_approval"].includes(task.status)) pollTask(taskId);
-      else stopPoll(taskId);
-    }, 2500);
-    state.polls.set(taskId, timer);
-  }
-
-  async function refreshTask(taskId) {
-    const bubble = document.querySelector(`.bubble[data-task-id="${taskId}"]`);
-    let task;
-    try {
-      task = await api(`/agent/tasks/${taskId}`);
-    } catch (error) {
-      if (bubble) { const box = bubble.querySelector(".err"); box.hidden = false; box.textContent = error.message; }
-      stopPoll(taskId);
-      return null;
-    }
-    if (bubble) paintTask(bubble, task);
-    detectWorker(task);
-    return task;
-  }
-
-  // A task that leaves the queue proves a worker is alive; one parked in the
-  // queue past a deadline proves there is none. No invented endpoint needed.
-  function detectWorker(task) {
-    if (["running", "completed", "failed", "cancelled", "awaiting_approval"].includes(task.status)) {
-      state.workerStale = false;
-      setDot("workerDot", "workerText", "ok", "running");
-      renderRuntimeBanner();
-    }
-  }
-
-  function markWorkerStale(tasks) {
-    const active = tasks.filter((t) => t.status !== "queued");
-    if (active.length) { state.workerStale = false; setDot("workerDot", "workerText", "ok", "running"); return; }
-    const oldest = tasks.find((t) => t.status === "queued");
-    if (!oldest) { setDot("workerDot", "workerText", "idle", "idle"); return; }
-    const age = (Date.now() - new Date(oldest.created_at).getTime()) / 1000;
-    const stale = age > Runtime.workerIdleSeconds;
-    state.workerStale = stale;
-    setDot("workerDot", "workerText", stale ? "warn" : "idle", stale ? "no worker" : "idle");
-  }
-
-  function userBubble(text) {
-    const bubble = el("div", "bubble me");
-    const meta = el("div", "meta");
-    meta.append(el("span", null, UID), el("span", null, "just now"));
-    bubble.append(meta, el("div", "txt", text));
-    return bubble;
-  }
-
-  async function sendRequest() {
-    const text = $("askInput").value.trim();
-    if (!text) return;
-    $("askBtn").disabled = true;
-    try {
-      const created = await api("/agent/requests", {
-        method: "POST", body: JSON.stringify({ text, request_id: crypto.randomUUID() }),
-      });
-      ensureThreadHasContent();
-      $("thread").appendChild(userBubble(text));
-      const bubble = taskBubble({ ...created, request_text: text, attempts: 0, approvals: [] });
-      $("thread").appendChild(bubble);
-      bubble.scrollIntoView({ behavior: "smooth", block: "end" });
-      pollTask(created.task_id);
-      $("askInput").value = "";
-    } catch (error) {
-      flashError(error.message);
+      toast(error.message, true);
     } finally {
-      $("askBtn").disabled = false;
+      $("joinBtn").disabled = false;
+      $("joinBtn").textContent = "Send Cue";
     }
   }
 
-  async function loadThread() {
-    const holder = $("thread");
-    holder.textContent = "";
-    let tasks;
+  async function endMeeting(id, button) {
+    button.disabled = true;
+    button.lastChild.textContent = "Writing notes…";
     try {
-      ({ tasks } = await api("/agent/tasks?limit=30"));
+      await api(`/meetings/${id}/end`, { method: "POST" });
+      toast("Cue left the call and wrote the notes.");
+      loadMeetings();
     } catch (error) {
-      holder.appendChild(el("div", "err", error.message));
-      return;
-    }
-    markWorkerStale(tasks);
-    renderRuntimeBanner();
-    if (!tasks.length) { holder.appendChild(el("div", "empty", "No requests yet. Ask Cue something above.")); return; }
-    for (const task of [...tasks].reverse()) {
-      if (task.request_text) holder.appendChild(userBubble(task.request_text));
-      holder.appendChild(taskBubble(task));
-      if (["queued", "running", "awaiting_approval"].includes(task.status)) pollTask(task.task_id);
+      toast(error.message, true);
+      button.disabled = false;
+      button.lastChild.textContent = "End & write notes";
     }
   }
 
-  // Sending a request must clear the placeholder left by an empty history.
-  function ensureThreadHasContent() {
-    const holder = $("thread");
-    const placeholder = holder.querySelector(".empty");
-    if (placeholder) placeholder.remove();
+  /* ----------------------------------------------------------------- chat -- */
+  const STARTS = [
+    { q: "What changed in the repo this week?", s: "GitHub", i: "github" },
+    { q: "Anything in my inbox I should know about?", s: "Gmail", i: "gmail" },
+    { q: "What did we decide in the last meeting?", s: "Meetings", i: "meeting" },
+  ];
+  const MODES = [
+    { id: "agent", label: "Ask Cue", i: "sparkle", hint: "Ask about commits, issues, email, meetings…" },
+    { id: "memory", label: "Search memory", i: "search", hint: "Search what Cue has read, with sources…" },
+  ];
+
+  function buildChat() {
+    for (const start of STARTS) {
+      const card = el("button", "start");
+      const top = el("div");
+      top.appendChild(icon(start.i));
+      const text = el("div");
+      text.append(el("div", "q", start.q), el("div", "s", start.s));
+      card.append(top, text);
+      card.onclick = () => { $("ask").value = start.q; send(); };
+      $("starts").appendChild(card);
+    }
+    for (const mode of MODES) {
+      const chip = el("button", `chip${mode.id === state.mode ? " on" : ""}`, mode.label);
+      chip.type = "button";
+      chip.prepend(icon(mode.i));
+      chip.setAttribute("aria-pressed", mode.id === state.mode);
+      chip.onclick = () => {
+        state.mode = mode.id;
+        for (const c of $("modeChips").children) {
+          const on = c === chip;
+          c.classList.toggle("on", on);
+          c.setAttribute("aria-pressed", on);
+        }
+        $("ask").placeholder = mode.hint;
+        $("ask").focus();
+      };
+      $("modeChips").appendChild(chip);
+    }
+    const box = $("ask");
+    box.addEventListener("input", () => {
+      box.style.height = "auto";
+      box.style.height = `${Math.min(box.scrollHeight, 160)}px`;
+      $("sendBtn").disabled = !box.value.trim();
+    });
+    box.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+    $("composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
   }
 
-  function flashError(message) {
-    const banner = el("div", "banner bad", message);
-    $("runtimeBanner").prepend(banner);
-    setTimeout(() => banner.remove(), 6000);
+  function cueMessage() {
+    const msg = el("div", "msg cue");
+    msg.appendChild(avatar("Cue", true));
+    const body = el("div");
+    const status = el("div", "status");
+    const dots = el("span", "typing");
+    dots.append(el("i"), el("i"), el("i"));
+    status.append(dots, el("span", null, "Thinking…"));
+    body.appendChild(status);
+    msg.appendChild(body);
+    return { msg, body };
   }
 
-  /* ---------------------------------------------------------- approvals -- */
-  async function loadApprovals() {
-    const holder = $("approvalsList");
-    holder.textContent = "";
-    let approvals;
+  function sourceChips(citations) {
+    const row = el("div", "sources");
+    for (const cite of citations.slice(0, 6)) {
+      const chip = el(cite.url ? "a" : "span", "source");
+      if (cite.url) { chip.href = cite.url; chip.target = "_blank"; chip.rel = "noopener"; }
+      chip.append(el("b", null, cite.number), el("span", null,
+        `${SOURCE_NAME[cite.source] || cite.source || "Source"} · ${(cite.text || "").replace(/\s+/g, " ").slice(0, 60)}`));
+      chip.title = cite.text || "";
+      row.appendChild(chip);
+    }
+    return row;
+  }
+
+  function scrollChat() {
+    const s = $("chatScroll");
+    s.scrollTop = s.scrollHeight;
+  }
+
+  async function send() {
+    const box = $("ask");
+    const text = box.value.trim();
+    if (!text) return;
+    $("hello").hidden = true;
+    box.value = "";
+    box.style.height = "auto";
+    $("sendBtn").disabled = true;
+    const mine = el("div", "msg me");
+    mine.appendChild(el("div", "body", text));
+    const { msg, body } = cueMessage();
+    $("thread").append(mine, msg);
+    scrollChat();
     try {
-      ({ approvals } = await api("/agent/approvals"));
-    } catch (error) {
-      holder.appendChild(el("div", "err", error.message));
-      return;
-    }
-    const badge = document.querySelector('.nav-item[data-pane="approvals"] .badge');
-    badge.textContent = approvals.length;
-    badge.classList.toggle("show", approvals.length > 0);
-    if (!approvals.length) { holder.appendChild(el("div", "empty", "Nothing is waiting on you.")); return; }
-    for (const approval of approvals) {
-      const card = el("div", "card");
-      card.style.background = "var(--surface-2)";
-      const head = el("div", "row");
-      head.append(el("span", `pill ${approval.task_status}`, approval.task_status));
-      head.append(el("code", null, approval.tool));
-      head.append(el("span", "hint", `tier ${approval.tier} · ${approval.source} · ${timeAgo(approval.created_at)}`));
-      card.appendChild(head);
-      if (approval.request_text) card.appendChild(el("div", "hint", `“${approval.request_text.slice(0, 200)}”`));
-      const args = el("pre");
-      args.textContent = pretty(approval.arguments);
-      card.appendChild(args);
-      const actions = el("div", "row");
-      actions.style.marginTop = "8px";
-      for (const [label, cls, approve] of [["Approve & continue", "btn ok", true], ["Reject", "btn danger", false]]) {
-        const button = el("button", cls, label);
-        button.onclick = async () => {
-          button.disabled = true;
-          await decide(approval.id, approve);
-          loadApprovals();
-        };
-        actions.appendChild(button);
+      if (state.mode === "memory") {
+        const result = await api("/memory/query", { method: "POST", body: JSON.stringify({ question: text }) });
+        body.replaceChildren(prose(result.answer || result.summary || "I couldn't find anything on that."));
+        if ((result.citations || []).length) body.appendChild(sourceChips(result.citations));
+      } else {
+        const created = await api("/agent/requests", {
+          method: "POST", body: JSON.stringify({ text, request_id: crypto.randomUUID() }),
+        });
+        followTask(created.task_id, body);
       }
-      const open = el("button", "btn ghost small", "Open task");
-      open.onclick = () => { show("tasks"); setTimeout(loadTaskDetail.bind(null, approval.task_id), 50); };
-      actions.appendChild(open);
-      card.appendChild(actions);
-      holder.appendChild(card);
-    }
-  }
-
-  function timeAgo(iso) {
-    if (!iso) return "";
-    const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-    if (seconds < 60) return `${seconds}s ago`;
-    if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
-    return `${Math.round(seconds / 86400)}d ago`;
-  }
-
-  /* ------------------------------------------------------------- memory -- */
-  async function queryMemory() {
-    const question = $("memInput").value.trim();
-    if (!question) return;
-    const holder = $("memOut");
-    $("memBtn").disabled = true;
-    holder.textContent = "";
-    holder.appendChild(el("div", "hint", "Routing the question…"));
-    try {
-      const result = await api("/memory/query", {
-        method: "POST", body: JSON.stringify({ question }),
-      });
-      holder.textContent = "";
-      const card = el("div", "card");
-      card.style.background = "var(--surface-2)";
-      const head = el("div", "row");
-      head.append(el("span", "pill completed", `route: ${result.route}`));
-      card.appendChild(head);
-      card.appendChild(el("div", "txt", result.answer || "No answer returned."));
-      if ((result.citations || []).length) card.appendChild(citationBlock(result.citations));
-      holder.appendChild(card);
     } catch (error) {
-      holder.textContent = "";
-      holder.appendChild(el("div", "banner bad", error.message));
+      body.replaceChildren(el("div", "body", error.message));
+    }
+    scrollChat();
+  }
+
+  function followTask(taskId, body) {
+    const tick = async () => {
+      let task;
+      try {
+        task = await api(`/agent/tasks/${taskId}`);
+      } catch (error) {
+        body.replaceChildren(el("div", "body", error.message));
+        return;
+      }
+      paintTask(task, body);
+      if (["queued", "running", "awaiting_approval"].includes(task.status)) setTimeout(tick, 1500);
+    };
+    tick();
+  }
+
+  function paintTask(task, body) {
+    const working = { queued: "Picking this up…", running: "Working on it…" }[task.status];
+    if (working) {
+      body.querySelector(".status span:last-child").textContent = working;
+      return;
+    }
+    body.replaceChildren();
+    if (task.status === "awaiting_approval") {
+      const pending = (task.approvals || []).filter((a) => a.status === "pending");
+      body.appendChild(el("div", "body", task.answer || "I need your go-ahead before I do this."));
+      for (const approval of pending) body.appendChild(inlineApproval(approval, () => followTask(task.task_id, body)));
+    } else if (task.status === "failed") {
+      body.appendChild(el("div", "body", task.error ? `That didn't work: ${task.error}` : "That didn't work."));
+    } else {
+      body.appendChild(prose(task.answer || "Done."));
+      const cites = task.plan && (task.plan.citations || (task.plan.memory || {}).citations);
+      if (cites && cites.length) body.appendChild(sourceChips(cites));
+    }
+    scrollChat();
+  }
+
+  function inlineApproval(approval, after) {
+    const row = el("div", "inline-approval");
+    row.appendChild(el("span", null, `Wants to run ${humanTool(approval.tool)}`));
+    const yes = el("button", "btn ok small", "Approve");
+    const no = el("button", "btn light small", "Decline");
+    yes.onclick = async () => { await decide(approval.id, true); after(); };
+    no.onclick = async () => { await decide(approval.id, false); after(); };
+    row.append(yes, no);
+    return row;
+  }
+
+  /* --------------------------------------------------------------- memory -- */
+  const MEM_FILTERS = [
+    ["Latest commits", "github", "What are the latest commits?"],
+    ["Open issues", "github", "What issues are open?"],
+    ["New email", "gmail", "What are the latest emails?"],
+    ["This week's calendar", "calendar", "What's on the calendar this week?"],
+  ];
+
+  function buildMemory() {
+    for (const [label, src, q] of MEM_FILTERS) {
+      const chip = el("button", "chip", label);
+      chip.type = "button";
+      chip.prepend(icon(SOURCE_ICON[src]));
+      chip.onclick = () => { $("memQ").value = q; searchMemory(); };
+      $("memChips").appendChild(chip);
+    }
+    $("memForm").addEventListener("submit", (e) => { e.preventDefault(); searchMemory(); });
+  }
+
+  async function searchMemory() {
+    const question = $("memQ").value.trim();
+    if (question.length < 3) return;
+    const out = $("memOut");
+    $("memBtn").disabled = true;
+    out.replaceChildren(el("p", "muted", "Searching…"));
+    try {
+      const result = await api("/memory/query", { method: "POST", body: JSON.stringify({ question }) });
+      out.replaceChildren();
+      const answer = el("div", "answer");
+      answer.appendChild(prose(result.answer || result.summary || "Nothing found.", "p"));
+      out.appendChild(answer);
+      const records = el("div", "records");
+      for (const cite of result.citations || []) {
+        const row = el("div", "record");
+        const ico = el("div", "ico");
+        ico.appendChild(icon(SOURCE_ICON[cite.source] || "sparkle"));
+        const mid = el("div");
+        mid.appendChild(el("div", "txt", (cite.text || "").slice(0, 320)));
+        const meta = el("div", "meta", `${SOURCE_NAME[cite.source] || cite.source} · ${(cite.type || "").replace(/[._]/g, " ")}`);
+        if (cite.url) {
+          meta.append(" · ");
+          const link = el("a", null, "Open");
+          link.href = cite.url; link.target = "_blank"; link.rel = "noopener";
+          meta.appendChild(link);
+        }
+        mid.appendChild(meta);
+        row.append(ico, mid, el("div", "when", ago(cite.occurred_at)));
+        records.appendChild(row);
+      }
+      if (!(result.citations || []).length) records.appendChild(el("div", "empty", "No matching records. Try naming the source: “commits”, “emails”, “calendar”."));
+      out.appendChild(records);
+    } catch (error) {
+      out.replaceChildren(el("div", "empty", error.message));
     } finally {
       $("memBtn").disabled = false;
     }
   }
 
-  /* -------------------------------------------------------------- tasks --- */
-  async function loadTasks() {
-    const holder = $("tasksTable");
-    holder.textContent = "";
-    const status = $("taskFilter").value;
-    let tasks;
+  /* ------------------------------------------------------------- activity -- */
+  const TOOL_WORDS = {
+    "github.create_issue": "Create a GitHub issue", "github.comment": "Comment on GitHub",
+    "gmail.send": "Send an email", "gmail.send_email": "Send an email", "gmail.draft": "Draft an email",
+    "calendar.create_event": "Create a calendar event", "calendly.create_link": "Create a Calendly link",
+  };
+  function humanTool(tool) {
+    return TOOL_WORDS[tool] || tool.replace(/^\w+\./, "").replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+  }
+
+  async function decide(id, approve) {
     try {
-      ({ tasks } = await api(`/agent/tasks?limit=50${status ? `&status=${status}` : ""}`));
+      await api(`/agent/approvals/${id}`, { method: "POST", body: JSON.stringify({ approve }) });
+      toast(approve ? "Approved. Cue is on it." : "Declined. Nothing was changed.");
     } catch (error) {
-      holder.appendChild(el("div", "err", error.message));
-      return;
+      toast(error.message, true);
     }
-    markWorkerStale(tasks);
-    renderRuntimeBanner();
-    if (!tasks.length) { holder.appendChild(el("div", "empty", "No tasks match.")); return; }
-    const table = el("table");
-    const headRow = el("tr");
-    for (const label of ["Task", "Status", "Requested", "Answer / error", "Updated"])
-      headRow.appendChild(el("th", null, label));
-    table.append(el("thead", null, ""), el("tbody"));
-    table.firstChild.appendChild(headRow);
-    for (const task of tasks) {
-      const row = el("tr");
-      row.style.cursor = "pointer";
-      row.append(
-        el("td", null, `${task.task_id.slice(0, 8)} (${task.source})`),
-        el("td", null, ""),
-        el("td", null, (task.request_text || "").slice(0, 90)),
-        el("td", null, (task.answer || task.error || "—").slice(0, 120)),
-        el("td", "hint", timeAgo(task.updated_at)),
-      );
-      row.children[1].appendChild(el("span", `pill ${task.status}`, task.status));
-      row.onclick = () => loadTaskDetail(task.task_id);
-      table.lastChild.appendChild(row);
-    }
-    holder.appendChild(table);
+    refreshBadge();
   }
 
-  async function loadTaskDetail(taskId) {
-    let task;
+  async function refreshBadge() {
     try {
-      task = await api(`/agent/tasks/${taskId}`);
-    } catch (error) {
-      flashError(error.message);
-      return;
+      const { approvals } = await api("/agent/approvals");
+      document.querySelector('.rail-btn[data-view="activity"] .dot').classList.toggle("show", approvals.length > 0);
+      return approvals;
+    } catch (_) {
+      return null;
     }
-    const holder = $("tasksTable");
-    const card = el("div", "card");
-    card.style.border = "1px solid var(--accent)";
-    const head = el("div", "row");
-    head.append(el("span", `pill ${task.status}`, task.status), el("code", null, task.task_id));
-    const close = el("button", "btn ghost small", "Close");
-    close.onclick = loadTasks;
-    head.append(el("div", "spacer"), close);
-    card.appendChild(head);
-    card.appendChild(el("div", "divider"));
-    card.appendChild(el("div", "hint", `asked: ${task.request_text || "—"}`));
-    card.appendChild(el("div", null, task.answer || task.error || "(no answer yet)"));
-    if (task.plan) {
-      const pre = el("pre");
-      pre.textContent = pretty(task.plan);
-      card.appendChild(pre);
-    }
-    const approvalBox = el("div");
-    card.appendChild(approvalBox);
-    renderApprovalRows(approvalBox, task.approvals || [], () => loadTaskDetail(taskId));
-    holder.prepend(card);
   }
 
-  /* ----------------------------------------------------------- meetings --- */
-  async function joinMeeting() {
-    const meeting_url = $("mtUrl").value.trim();
-    if (!meeting_url) return flashError("A meeting URL is required.");
-    const attendees = $("mtPeople").value.split("\n").map((line) => line.trim()).filter(Boolean)
-      .map((email) => ({ email, display_name: email.split("@")[0] }));
-    const holder = $("mtOut");
-    $("mtJoin").disabled = true;
-    holder.textContent = "";
+  async function loadActivity() {
+    const approvals = await refreshBadge();
+    const holder = $("approvals");
+    holder.replaceChildren();
+    const hero = el("div", "act-hero");
+    const img = el("img", "art");
+    img.alt = "";
+    const words = el("div");
+    if (approvals && approvals.length) {
+      img.src = "/ui/mascot/approval.png";
+      words.append(el("h2", null, `${approvals.length} thing${approvals.length === 1 ? "" : "s"} waiting on you`),
+        el("p", "muted", "Cue won't touch other tools until you say yes."));
+    } else {
+      img.src = "/ui/mascot/acting.png";
+      words.append(el("h2", null, "All clear"), el("p", "muted", "Nothing is waiting for approval."));
+    }
+    hero.append(img, words);
+    holder.appendChild(hero);
+    for (const a of approvals || []) {
+      const card = el("div", "approval");
+      const ico = el("div", "ico");
+      ico.appendChild(icon("shield"));
+      const body = el("div");
+      body.appendChild(el("h2", null, humanTool(a.tool)));
+      body.appendChild(el("div", "why", `${a.request_text ? `Because someone asked: “${a.request_text.slice(0, 140)}”` : "Requested by Cue"} · ${ago(a.created_at)}`));
+      const args = el("dl", "args");
+      for (const [k, v] of Object.entries(a.arguments || {})) {
+        args.append(el("dt", null, k.replace(/_/g, " ")), el("dd", null, typeof v === "string" ? v : JSON.stringify(v)));
+      }
+      if (args.children.length) body.appendChild(args);
+      const actions = el("div", "actions");
+      const yes = el("button", "btn ok", "Approve");
+      const no = el("button", "btn light", "Decline");
+      yes.onclick = async () => { yes.disabled = no.disabled = true; await decide(a.id, true); loadActivity(); };
+      no.onclick = async () => { yes.disabled = no.disabled = true; await decide(a.id, false); loadActivity(); };
+      actions.append(yes, no);
+      body.appendChild(actions);
+      card.append(ico, body);
+      holder.appendChild(card);
+    }
+
+    const history = $("history");
     try {
-      const result = await api("/meetings", {
-        method: "POST",
-        body: JSON.stringify({ meeting_url, title: $("mtTitle").value.trim() || null, attendees }),
-      });
-      holder.appendChild(el("div", "banner", `Joined as ${result.bot_id}. Disclosure sent: ${result.disclosure}`));
-      $("ntId").value = result.meeting_id;
-      const pre = el("pre");
-      pre.textContent = pretty(result);
-      holder.appendChild(pre);
-    } catch (error) {
-      holder.appendChild(el("div", "banner bad", error.message));
-    } finally {
-      $("mtJoin").disabled = false;
-    }
-  }
-
-  async function loadNotes() {
-    const meetingId = $("ntId").value.trim();
-    if (!meetingId) return flashError("Enter a meeting ID.");
-    const holder = $("ntOut");
-    holder.textContent = "";
-    try {
-      const note = await api(`/meetings/${meetingId}/notes`);
-      renderNote(holder, note.note || note);
-    } catch (error) {
-      holder.appendChild(el("div", "banner bad", error.message));
-    }
-  }
-
-  function renderNote(holder, note) {
-    if (!note) { holder.appendChild(el("div", "empty", "No notes yet.")); return; }
-    const card = el("div", "card");
-    card.style.background = "var(--surface-2)";
-    card.appendChild(el("h2", null, "Summary"));
-    card.appendChild(el("div", null, note.summary || "—"));
-    if ((note.decisions || []).length) {
-      card.appendChild(el("div", "divider"));
-      card.appendChild(el("h2", null, "Decisions"));
-      const list = el("ul");
-      for (const decision of note.decisions) list.appendChild(el("li", null, decision));
-      card.appendChild(list);
-    }
-    if ((note.action_items || []).length) {
-      card.appendChild(el("div", "divider"));
-      card.appendChild(el("h2", null, "Action items"));
-      const list = el("ul");
-      for (const item of note.action_items)
-        list.appendChild(el("li", null, `${item.text || item}${item.owner ? ` — ${item.owner}` : ""}${item.due ? ` (due ${item.due})` : ""}`));
-      card.appendChild(list);
-    }
-    if ((note.sources || []).length) {
-      card.appendChild(el("div", "divider"));
-      card.appendChild(el("h2", null, "Transcript sources"));
-      for (const source of note.sources)
-        card.appendChild(el("div", "cite", `[${source.position ?? source}] ${typeof source === "string" ? source : source.quote || ""}`));
-    }
-    card.appendChild(el("div", "hint", `visibility: ${note.visibility || "—"} · ${note.published_at ? "published" : "not published"}`));
-    holder.appendChild(card);
-  }
-
-  async function endMeeting() {
-    const meetingId = $("ntId").value.trim();
-    if (!meetingId) return flashError("Enter a meeting ID.");
-    const holder = $("ntOut");
-    $("ntEnd").disabled = true;
-    holder.textContent = "";
-    try {
-      const result = await api(`/meetings/${meetingId}/end`, { method: "POST" });
-      renderNote(holder, result.note);
-      if ((result.actions || []).length) {
-        const pre = el("pre");
-        pre.textContent = pretty(result.actions);
-        holder.appendChild(pre);
+      const { tasks } = await api("/agent/tasks?limit=25");
+      history.replaceChildren();
+      if (!tasks.length) history.appendChild(el("div", "empty", "Cue hasn't done anything yet."));
+      for (const t of tasks) {
+        const row = el("div", "task-row");
+        row.appendChild(el("span", `pip ${t.status}`));
+        const mid = el("div");
+        mid.appendChild(el("div", "q", t.request_text || "(no request text)"));
+        const a = (t.answer || t.error || "").replace(/\s*\[\d+(?:,\s*\d+)*\]/g, "");
+        if (a) mid.appendChild(el("div", "a", a));
+        row.append(mid, el("span", "muted", `${t.source} · ${ago(t.updated_at)}`));
+        history.appendChild(row);
       }
     } catch (error) {
-      holder.appendChild(el("div", "banner bad", error.message));
-    } finally {
-      $("ntEnd").disabled = false;
+      history.replaceChildren(el("div", "empty", error.message));
     }
   }
 
-  /* ---------------------------------------------------------- proactive --- */
-  async function loadProactive() {
-    const holder = $("ruleList");
-    holder.textContent = "";
-    let view;
-    try {
-      view = await api("/proactive");
-    } catch (error) {
-      holder.appendChild(el("div", "err", error.message));
-      return;
-    }
-    if (!view.rules.length) holder.appendChild(el("div", "empty", "No rules scheduled."));
-    const table = el("table");
-    const headRow = el("tr");
-    for (const label of ["Key", "Kind", "Schedule", "Next run", "Last run", "Enabled"])
-      headRow.appendChild(el("th", null, label));
-    table.append(el("thead"), el("tbody"));
-    table.firstChild.appendChild(headRow);
-    for (const rule of view.rules) {
-      const row = el("tr");
-      row.append(
-        el("td", null, rule.rule_key),
-        el("td", null, rule.kind),
-        el("td", "mono", rule.schedule || "one-shot"),
-        el("td", "hint", rule.next_run_at ? new Date(rule.next_run_at).toLocaleString() : "—"),
-        el("td", "hint", rule.last_run_at ? timeAgo(rule.last_run_at) : "never"),
-        el("td", null, ""),
-      );
-      row.children[5].appendChild(el("span", `pill ${rule.enabled ? "active" : "skipped"}`, rule.enabled ? "yes" : "no"));
-      table.lastChild.appendChild(row);
-    }
-    if (view.rules.length) holder.appendChild(table);
+  /* ------------------------------------------------------------- settings -- */
+  const ACCOUNTS = [
+    ["github", "GitHub", "Commits, pull requests and issues"],
+    ["gmail", "Gmail", "Email threads"],
+    ["calendar", "Google Calendar", "Events and attendees"],
+    ["calendly", "Calendly", "Bookings and scheduling links"],
+  ];
+  // Not built yet: shown so the team can see what's planned, never as connectable.
+  const PLANNED = [
+    ["slack", "Slack", "Channels, threads and decisions"],
+    ["jira", "Jira", "Tickets, sprints and assignees"],
+    ["notion", "Notion", "Docs, specs and wikis"],
+    ["asana", "Asana", "Projects and tasks"],
+    ["apollo", "Apollo", "Contacts and accounts"],
+    ["zapier", "Zapier", "Trigger your Zaps from a meeting"],
+    ["n8n", "n8n", "Run your workflows from a meeting"],
+  ];
+  const TIERS = [
+    [0, "Read and search", "Automatic", "ok"],
+    [1, "Internal and reversible", "Automatic, logged", "ok"],
+    [2, "Visible to the team", "Needs approval", "warn"],
+    [3, "Leaves the company", "Needs approval", "warn"],
+    [4, "Prohibited", "Never", "bad"],
+  ];
 
-    const muteBox = $("muteList");
-    muteBox.textContent = "";
-    const lines = [];
-    if (view.mutes.length) lines.push(...view.mutes.map((m) => `muted: ${m.firebase_uid} → ${m.rule_key}`));
-    if (view.quiet_hours.length) lines.push(...view.quiet_hours.map((q) => `quiet hours (${q.scope} ${q.subject}): ${q.start_time}–${q.end_time} ${q.timezone}`));
-    if (!lines.length) muteBox.appendChild(el("div", "empty", "No mutes or quiet hours set."));
-    for (const line of lines) muteBox.appendChild(el("div", "hint", line));
-
-    const runBox = $("runList");
-    runBox.textContent = "";
-    if (!view.runs.length) { runBox.appendChild(el("div", "empty", "No runs yet.")); return; }
-    const runTable = el("table");
-    const runHead = el("tr");
-    for (const label of ["Rule", "Status", "Deliver after", "Created"]) runHead.appendChild(el("th", null, label));
-    runTable.append(el("thead"), el("tbody"));
-    runTable.firstChild.appendChild(runHead);
-    for (const run of view.runs) {
-      const row = el("tr");
-      row.append(
-        el("td", null, run.rule_key),
-        el("td", null, ""),
-        el("td", "hint", run.deliver_after ? new Date(run.deliver_after).toLocaleString() : "—"),
-        el("td", "hint", timeAgo(run.created_at)),
-      );
-      row.children[1].appendChild(el("span", `pill ${run.status}`, run.status));
-      runTable.lastChild.appendChild(row);
-    }
-    runBox.appendChild(runTable);
-  }
-
-  async function createRule() {
-    const body = {
-      rule_key: $("prKey").value.trim(),
-      kind: $("prKind").value,
-      timezone: $("prTz").value.trim() || "UTC",
-    };
-    if (!$("prKey").value.trim()) return flashError("Rule key is required.");
-    if ($("prSchedule").value.trim()) body.schedule = $("prSchedule").value.trim();
-    if ($("prNext").value.trim()) body.next_run_at = new Date($("prNext").value).toISOString();
-    const rawConfig = $("prConfig").value.trim();
-    if (rawConfig) {
-      try { body.config = JSON.parse(rawConfig); }
-      catch { return flashError("Config must be valid JSON."); }
-    }
-    try {
-      await api("/proactive/rules", { method: "POST", body: JSON.stringify(body) });
-      $("prOut").textContent = "";
-      $("prOut").appendChild(el("div", "banner", "Rule created."));
-      loadProactive();
-    } catch (error) {
-      $("prOut").textContent = "";
-      $("prOut").appendChild(el("div", "banner bad", error.message));
-    }
-  }
-
-  async function saveQuietHours() {
-    try {
-      const scope = $("qhScope").value;
-      await api("/admin/quiet-hours", {
-        method: "PUT",
-        body: JSON.stringify({
-          scope, subject: scope === "user" ? UID : "*",
-          timezone: $("qhTz").value.trim() || "UTC",
-          start: $("qhStart").value, end: $("qhEnd").value,
-        }),
-      });
-      loadProactive();
-    } catch (error) { flashError(error.message); }
-  }
-
-  /* -------------------------------------------------------------- admin --- */
-  async function loadAdmin() {
-    let status;
-    try {
-      status = await api("/status");
-    } catch (error) {
-      $("statusStats").textContent = "";
-      $("statusStats").appendChild(el("div", "err", error.message));
-      return;
-    }
-    const stats = $("statusStats");
-    stats.textContent = "";
-    const counts = status.tasks || {};
-    const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-    const tiles = [
-      ["Tasks", total],
-      ["Awaiting approval", status.pending_approvals],
-      ["Completed", counts.completed || 0],
-      ["Failed", counts.failed || 0],
-      ["Queued", counts.queued || 0],
-      ["Paused events buffered", status.paused_events],
-    ];
-    for (const [label, value] of tiles) {
-      const tile = el("div", "stat");
-      tile.append(el("div", "lbl", label), el("div", "num", value));
-      stats.appendChild(tile);
-    }
-    const extra = [];
-    if (status.connectors?.length)
-      extra.push(status.connectors.map((c) => `${c.provider}: ${c.status} ×${c.count}`).join(" · "));
-    else extra.push("No connectors linked to this tenant yet.");
-    if (status.paused?.length) extra.push(`PAUSED: ${status.paused.map((p) => `${p.scope} ${p.subject} (${p.mode})`).join(", ")}`);
-    if (status.deferred_proactive) extra.push(`${status.deferred_proactive} proactive run(s) deferred to quiet hours.`);
-    if (status.last_reconciliation)
-      extra.push(`Reconciliation ${status.last_reconciliation.status} · missing ${status.last_reconciliation.missing} · backfilled ${status.last_reconciliation.backfilled}`);
-    extra.push(`Checked ${new Date(status.checked_at).toLocaleTimeString()}`);
-    $("statusExtra").textContent = extra.join("  ·  ");
-
-    let switches;
-    try {
-      ({ switches } = await api("/admin/kill-switches"));
-    } catch (error) {
-      switches = [];
-      $("switchList").appendChild(el("div", "err", error.message));
-    }
-    const box = $("switchList");
-    box.textContent = "";
-    if (!switches.length) box.appendChild(el("div", "empty", "No kill switches recorded."));
-    for (const item of switches) {
-      const row = el("div", "row");
-      row.append(
-        el("span", `pill ${item.paused ? "paused" : "active"}`, item.paused ? "paused" : "active"),
-        el("code", null, `${item.scope}/${item.subject}`),
-        el("span", "hint", `${item.mode}${item.reason ? ` · ${item.reason}` : ""}${item.changed_by ? ` · by ${item.changed_by}` : ""}`),
-      );
-      box.appendChild(row);
+  async function loadSettings() {
+    const holder = $("connectors");
+    let status = null;
+    try { status = await api("/status"); } catch (error) { toast(error.message, true); }
+    holder.replaceChildren();
+    const by = {};
+    for (const c of (status && status.connectors) || []) (by[c.provider] = by[c.provider] || []).push(c);
+    for (const [id, name, what] of ACCOUNTS) {
+      const row = el("div", "conn");
+      const ico = el("div", "ico");
+      ico.appendChild(icon(SOURCE_ICON[id]));
+      const mid = el("div");
+      mid.append(el("div", "n", name), el("div", "d", what));
+      const rows = by[id] || [];
+      const active = rows.find((r) => r.status === "active");
+      const tag = active ? el("span", "tag ok", "Connected")
+        : rows.length ? el("span", "tag warn", rows[0].status.replace(/_/g, " ")) : el("span", "tag", "Not connected");
+      row.append(ico, mid, tag);
+      holder.appendChild(row);
     }
 
-    const tiers = $("tierList");
-    tiers.textContent = "";
-    for (const tier of TIERS) {
-      const row = el("div", "row");
-      row.style.justifyContent = "space-between";
-      row.append(
-        el("span", null, `Tier ${tier.tier} · ${tier.name}`),
-        el("span", `pill ${tier.mode === "auto" ? "completed" : tier.mode === "deny" ? "failed" : "awaiting_approval"}`, tier.mode),
-      );
-      row.title = tier.note;
-      tiers.appendChild(row);
-      tiers.appendChild(el("div", "hint", tier.note));
+    const soon = $("planned");
+    soon.replaceChildren();
+    for (const [id, name, what] of PLANNED) {
+      const row = el("div", "conn soon");
+      const ico = el("div", "ico");
+      ico.appendChild(icon(id));
+      const mid = el("div");
+      mid.append(el("div", "n", name), el("div", "d", what));
+      row.append(ico, mid, el("span", "tag brand", "Coming soon"));
+      soon.appendChild(row);
     }
-  }
 
-  async function setSwitch(paused) {
-    const scope = $("ksScope").value;
-    const subject = encodeURIComponent($("ksSubject").value.trim() || "*");
-    try {
-      await api(`/admin/kill-switches/${scope}/${subject}`, {
-        method: "PUT",
-        body: JSON.stringify(paused
-          ? { paused: true, mode: $("ksMode").value, reason: "paused from console" }
-          : { paused: false }),
-      });
-      loadAdmin();
-    } catch (error) { flashError(error.message); }
-  }
-
-  async function loadAccessReport() {
-    const holder = $("accessReport");
-    holder.textContent = "";
-    let report;
-    try {
-      report = await api("/admin/access-report");
-    } catch (error) {
-      holder.appendChild(el("div", "err", error.message));
-      return;
-    }
-    const grid = el("div", "grid three");
-    for (const [label, value] of [
-      ["Documents", report.can_read.totals.documents],
-      ["Graph edges", report.can_read.totals.edges],
-      ["Summaries", report.can_read.totals.summaries],
-      ["Meetings", report.can_read.totals.meetings],
-      ["Notes", report.can_read.totals.notes],
-      ["Members", report.users.length],
+    const prefs = $("prefs");
+    prefs.replaceChildren();
+    const paused = status && (status.paused || []).length;
+    for (const [n, d, v] of [
+      ["Name in meetings", "What people say to get Cue's attention.", "Cue"],
+      ["Voice", "Free neural voice, played into the call.", "Ava"],
+      ["When Cue speaks", "Only when addressed by name, or any question in a one-on-one.", "When asked"],
+      ["Follow-up window", "After answering, short follow-ups need no name.", "45 seconds"],
+      ["Workspace status", "Admins can pause Cue from the operator console.", paused ? "Paused" : "Active"],
     ]) {
-      const tile = el("div", "stat");
-      tile.append(el("div", "lbl", label), el("div", "num", value));
-      grid.appendChild(tile);
+      const row = el("div", "pref");
+      const left = el("div");
+      left.append(el("div", "n", n), el("div", "d", d));
+      row.append(left, el("div", "v", v));
+      prefs.appendChild(row);
     }
-    holder.appendChild(grid);
 
-    const sections = [
-      ["Users", report.users.map((u) => `${u.firebase_uid} (${u.role})${u.revoked_at ? " REVOKED" : ""} · ${u.principals.length} principal(s)`)],
-      ["Connectors", report.connectors.map((c) => `${c.provider} ${c.external_id} — ${c.status}${c.paused ? " PAUSED" : ""}${c.last_error ? ` · ${c.last_error}` : ""}`)],
-      ["Policies", report.policies.map((p) => `${p.scope}/${p.subject} → ${p.mode}`)],
-      ["Revocations", report.revocations.map((r) => `${r.kind} ${r.subject} — ${r.reason}`)],
-      ["Memory by source", report.can_read.by_source.map((d) => `${d.source} / ${d.visibility}: ${d.count}`)],
-    ];
-    for (const [title, lines] of sections) {
-      if (!lines.length) continue;
-      const details = el("details");
-      details.appendChild(el("summary", null, `${title} (${lines.length})`));
-      const list = el("div");
-      for (const line of lines) list.appendChild(el("div", "hint", line));
-      details.appendChild(list);
-      holder.appendChild(details);
+    const tiers = $("tiers");
+    tiers.replaceChildren();
+    for (const [n, label, mode, tone] of TIERS) {
+      const row = el("div", "tier");
+      row.append(el("b", null, n), el("span", null, label), el("span", `tag ${tone}`, mode));
+      tiers.appendChild(row);
     }
   }
 
-  async function exportAudit() {
-    const since = $("auSince").value, until = $("auUntil").value;
-    if (!since || !until) return flashError("Pick a start and end time.");
-    const format = $("auFormat").value;
-    const url = `/v1/tenants/${TENANT}/admin/audit/export?since=${encodeURIComponent(new Date(since).toISOString())}` +
-      `&until=${encodeURIComponent(new Date(until).toISOString())}&format=${format}`;
-    const holder = $("auditOut");
-    holder.textContent = "";
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(detail.slice(0, 300));
-      }
-      const text = await response.text();
-      const download = el("button", "btn ghost small", "Download");
-      download.onclick = () => {
-        const blob = new Blob([text], { type: format === "csv" ? "text/csv" : "application/json" });
-        const link = el("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = `cue-audit.${format}`;
-        link.click();
-        URL.revokeObjectURL(link.href);
-      };
-      const pre = el("pre");
-      pre.textContent = format === "json" ? pretty(JSON.parse(text)) : text;
-      holder.append(download, pre);
-    } catch (error) {
-      holder.appendChild(el("div", "banner bad", error.message));
-    }
-  }
-
-  async function revokeAccess() {
-    const subject = $("rvSubject").value.trim();
-    const reason = $("rvReason").value.trim();
-    if (!subject || !reason) return flashError("Subject and reason are both required.");
-    try {
-      await api("/admin/revocations", {
-        method: "POST",
-        body: JSON.stringify({ kind: $("rvKind").value, subject, reason }),
-      });
-      $("dangerOut").textContent = "";
-      $("dangerOut").appendChild(el("div", "banner", "Revocation propagated across stores."));
-      loadAdmin();
-      loadAccessReport();
-    } catch (error) {
-      $("dangerOut").textContent = "";
-      $("dangerOut").appendChild(el("div", "banner bad", error.message));
-    }
-  }
-
-  async function deleteEvent() {
-    const eventId = $("evId").value.trim();
-    if (!eventId) return flashError("Enter an event id.");
-    if (!confirm(`Delete ${eventId} from every store? This cannot be undone from the UI.`)) return;
-    try {
-      const result = await api(`/admin/events/${encodeURIComponent(eventId)}`, { method: "DELETE" });
-      $("dangerOut").textContent = "";
-      const pre = el("pre");
-      pre.textContent = pretty(result);
-      $("dangerOut").append(el("div", "banner", "Deleted."), pre);
-    } catch (error) {
-      $("dangerOut").textContent = "";
-      $("dangerOut").appendChild(el("div", "banner bad", error.message));
-    }
-  }
-
-  /* --------------------------------------------------------------- init --- */
-  function wire() {
-    $("askBtn").onclick = sendRequest;
-    $("reloadThread").onclick = loadThread;
-    $("askInput").addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendRequest();
+  /* ----------------------------------------------------------------- boot -- */
+  function boot() {
+    buildRail();
+    buildChat();
+    buildMemory();
+    $("joinForm").addEventListener("submit", joinMeeting);
+    let start = "meetings";
+    try { start = localStorage.getItem("cue.view") || start; } catch (_) { /* storage is optional */ }
+    if (location.hash) start = location.hash.slice(1);
+    show(VIEWS.some((v) => v.id === start) ? start : "meetings");
+    refreshBadge();
+    // Polling pauses in a hidden tab; pick the live meeting back up the moment it is visible.
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && state.view === "meetings" && state.meetingId && state.live
+          && state.live.status !== "ended") openMeeting(state.meetingId);
     });
-    $("memBtn").onclick = queryMemory;
-    $("memInput").addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) queryMemory();
-    });
-    $("tasksRefresh").onclick = loadTasks;
-    $("taskFilter").onchange = loadTasks;
-    $("mtJoin").onclick = joinMeeting;
-    $("ntLoad").onclick = loadNotes;
-    $("ntEnd").onclick = endMeeting;
-    $("prCreate").onclick = createRule;
-    $("qhSave").onclick = saveQuietHours;
-    $("ksPause").onclick = () => setSwitch(true);
-    $("ksResume").onclick = () => setSwitch(false);
-    $("arLoad").onclick = loadAccessReport;
-    $("auLoad").onclick = exportAudit;
-    $("rvRun").onclick = revokeAccess;
-    $("evDelete").onclick = deleteEvent;
-    $("refreshBtn").onclick = () => {
-      checkRuntime();
-      if (state.view === "ask") loadThread();
-      else if (state.view === "approvals") loadApprovals();
-      else if (state.view === "tasks") loadTasks();
-      else if (state.view === "proactive") loadProactive();
-      else if (state.view === "admin") { loadAdmin(); loadAccessReport(); }
-    };
-    const now = new Date();
-    $("auUntil").value = localIso(now);
-    $("auSince").value = localIso(new Date(now.getTime() - 24 * 3600 * 1000));
+    setInterval(() => { if (document.visibilityState === "visible") refreshBadge(); }, 20000);
   }
-
-  const localIso = (date) =>
-    new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-
-  async function boot() {
-    buildNav();
-    wire();
-    show("ask");
-    $("who").textContent = UID;
-    $("tenantLabel").textContent = TENANT.slice(0, 8) + "…";
-    try {
-      const me = await api("/me");
-      state.role = me.role;
-      $("roleLabel").textContent = me.role;
-      for (const id of ["approvals", "admin"])
-        document.querySelector(`.nav-item[data-pane="${id}"]`).style.display =
-          id === "admin" && me.role !== "admin" ? "none" : "";
-    } catch (error) {
-      $("roleLabel").textContent = "unknown";
-      flashError(error.message);
-    }
-    await loadThread();
-    checkRuntime();
-    setInterval(checkRuntime, 15000);
-    whenVisible(loadApprovals);
-    setInterval(() => { if (state.view === "approvals") loadApprovals(); }, 20000);
-  }
-
   boot();
 })();

@@ -8,6 +8,8 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+
+from cue.http import tls_context
 import jwt
 from cue.connectors import secret_store
 
@@ -59,7 +61,7 @@ class GitHubConnector:
     provider = "github"
 
     def __init__(self, client: httpx.Client | None = None):
-        self.client = client or httpx.Client(timeout=15)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=15)
         self._cached_token: tuple[str, str, float] | None = None
 
     def _app_jwt(self) -> str:
@@ -89,7 +91,8 @@ class GitHubConnector:
 
     def subscribe(self) -> None:
         app = self._request("GET", "/app", self._app_jwt())
-        missing = REQUIRED_EVENTS - set(app.get("events", []))
+        # GitHub always delivers installation events and never lists them on the app.
+        missing = REQUIRED_EVENTS - {"installation"} - set(app.get("events", []))
         if missing:
             raise RuntimeError(f"GitHub App webhook events missing: {', '.join(sorted(missing))}")
 

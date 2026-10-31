@@ -19,7 +19,8 @@ def channel_participants(database: psycopg.Connection, tenant_id, principal: str
 
 
 def build_context(tenant_id, requester: str, question: str, participants: list[str], *,
-                  database_url: str | None = None, model=None, index=None, embedder=None) -> dict:
+                  database_url: str | None = None, model=None, index=None, embedder=None,
+                  fast: bool = False) -> dict:
     """Return the Phase 5 answer plus citations for the planner.
 
     `query_memory` already intersects every participant's principals, so a shared
@@ -28,7 +29,7 @@ def build_context(tenant_id, requester: str, question: str, participants: list[s
     result = query_memory(
         tenant_id, requester, question, participants,
         database_url or os.environ["DATABASE_URL"],
-        model=model, index=index, embedder=embedder,
+        model=model, index=index, embedder=embedder, fast=fast,
     )
     return {
         "summary": result["answer"],

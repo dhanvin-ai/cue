@@ -6,6 +6,7 @@ from uuid import UUID, NAMESPACE_URL, uuid5
 
 import httpx
 
+from cue.http import tls_context
 from cue.connectors.github import secret
 
 
@@ -19,7 +20,7 @@ class QwenEmbedder:
     dimensions = 1024
 
     def __init__(self, client: httpx.Client | None = None):
-        self.client = client or httpx.Client(timeout=45)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=45)
 
     def embed(self, value: str, *, query: bool = False) -> list[float]:
         content = ("Instruct: Retrieve relevant team work and decisions\nQuery: " + value) if query else value
@@ -39,7 +40,7 @@ class QwenEmbedder:
 
 class QdrantIndex:
     def __init__(self, client: httpx.Client | None = None):
-        self.client = client or httpx.Client(timeout=30)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=30)
         self._ready: set[UUID] = set()
 
     @staticmethod

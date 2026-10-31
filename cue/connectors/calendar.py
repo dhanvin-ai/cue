@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote, urlencode
 from uuid import UUID, uuid4
@@ -8,6 +8,7 @@ import os
 
 import httpx
 
+from cue.http import tls_context
 from cue.connectors.base import AccessControl, CanonicalEvent, Tool
 from cue.connectors.credentials import Credential
 from cue.connectors.github import secret
@@ -20,7 +21,7 @@ class CalendarConnector:
 
     def __init__(self, credential: Credential, owner: str, client: httpx.Client | None = None):
         self.credential, self.owner = credential, owner
-        self.client = client or httpx.Client(timeout=20)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=20)
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         response = self.client.request(
@@ -37,7 +38,12 @@ class CalendarConnector:
         path = f"/calendars/{quote(external_id, safe='')}/events"
         page = None
         while True:
-            params = {"updatedMin": since.isoformat(), "showDeleted": "true", "maxResults": 2500}
+            # Google rejects an updatedMin older than a few weeks (410 Gone), so a first import
+            # windows on event start time instead; regular polls keep the change filter.
+            if since > datetime.now(since.tzinfo) - timedelta(days=20):
+                params = {"updatedMin": since.isoformat(), "showDeleted": "true", "maxResults": 2500}
+            else:
+                params = {"timeMin": since.isoformat(), "maxResults": 2500}
             if page:
                 params["pageToken"] = page
             result = self._request("GET", path, params=params)

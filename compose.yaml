@@ -26,7 +26,46 @@ services:
     command: -scheme http -port 4443 -public-host localhost:4443
     ports:
       - "4443:4443"
+  # Open-source streaming speech-to-text on the local NVIDIA GPU (replaces Meet captions).
+  # Start with: docker compose --profile stt up -d stt
+  stt:
+    profiles: ["stt"]
+    build: deploy/kyutai-stt
+    ports:
+      - "8090:8080"
+    volumes:
+      - cue_hf:/hf
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Speaches (OpenAI-compatible, on the GPU): Whisper speech-to-text, which Attendee calls with
+  # "Hey Cue" as the prompt, and Kokoro text-to-speech for Cue's voice.
+  whisper:
+    profiles: ["stt"]
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    ports:
+      - "8091:8000"
+    environment:
+      WHISPER__TTL: "-1"  # keep the model loaded; reloading costs seconds per utterance
+    volumes:
+      - cue_whisper:/home/ubuntu/.cache/huggingface/hub
+      # Puts Kokoro TTS on the GPU; see the comment in the file.
+      - ./deploy/speaches/kokoro_model_manager.py:/home/ubuntu/speaches/src/speaches/executors/kokoro/model_manager.py:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
 volumes:
   cue_postgres:
   cue_qdrant:
+  cue_hf:
+  cue_whisper:

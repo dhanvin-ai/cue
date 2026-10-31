@@ -17,6 +17,7 @@ if _env_path.is_file():
         os.environ.setdefault(_key.strip(), _value.strip())
 
 # Tests exercise real Firebase verification via monkeypatched tokens, so the
-# local dev auth bypass must never be active under pytest, even when .env sets it.
-for _key in ("CUE_DEV_AUTH_UID", "CUE_DEV_TENANT_ID"):
+# local dev auth bypass must never be active under pytest, even when .env sets it. Memory tests
+# bring their own fake embedders, so a local keyword-only setting must not switch vectors off.
+for _key in ("CUE_DEV_AUTH_UID", "CUE_DEV_TENANT_ID", "CUE_VECTOR_SEARCH", "CUE_TRANSCRIBER", "CUE_TTS"):
     os.environ.pop(_key, None)

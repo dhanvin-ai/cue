@@ -4,6 +4,7 @@ from uuid import UUID
 
 import httpx
 
+from cue.http import tls_context
 from cue.connectors.base import AccessControl, CanonicalEvent, Tool
 from cue.connectors.normalize_v1 import normalize
 
@@ -16,7 +17,7 @@ class RecallConnector:
             raise ValueError("Unsupported Recall region")
         self.api_key = api_key
         self.API = f"https://{region}.recall.ai/api/v1"
-        self.client = client or httpx.Client(timeout=20)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=20)
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         response = self.client.request(

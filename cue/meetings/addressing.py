@@ -13,8 +13,30 @@ FOLLOW_UP = re.compile(r"^(?:and|also|so|then|what about|how about|why|what else
                        re.IGNORECASE)
 
 
+# Live captions often mishear a one-syllable name; accept the usual sound-alikes, but only as
+# the first word and followed by a comma or a question/request word, so "the job queue is
+# stuck" or "queue is backed up" never wakes Cue.
+SOUND_ALIKES = {"cue": r"q|queue|kew|kyu|eq|que|cu"}
+ASKING = (r"are|what|what's|who|where|when|why|how|can|could|did|will|would|should|tell|show"
+          r"|give|summarize|find|check|remind|hi|hello|hey")
+# Any of these greetings can open a request ("Hey / Hello / Hi / Okay Cue").
+GREETINGS = r"uh|um|hey|hi|hello|ok|okay|so|and"
+# Transcribers sometimes fuse a greeting with a short name: "HiQ", "OKQ".
+FUSED = {"cue": re.compile(r"\s*(?:hey|hi|hello|ok|okay)q\b", re.IGNORECASE)}
+
+
 def _mentions(text: str, agent_name: str) -> bool:
-    return re.search(rf"(?<!\w)@?{re.escape(agent_name)}(?!\w)", text, re.IGNORECASE) is not None
+    if re.search(rf"(?<!\w)@?{re.escape(agent_name)}(?!\w)", text, re.IGNORECASE):
+        return True
+    alikes = SOUND_ALIKES.get(agent_name.lower())
+    if not alikes:
+        return False
+    fused = FUSED.get(agent_name.lower())
+    if fused and fused.match(text):
+        return True
+    return bool(re.match(
+        rf"\s*(?:(?:{GREETINGS})[,.\s]+)*(?:{alikes})(?:\s*[,.!?]|\s+(?:{ASKING})\b)",
+        text, re.IGNORECASE))
 
 
 def _question(text: str) -> bool:

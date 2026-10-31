@@ -226,3 +226,11 @@ def test_temporal_owner_handles_out_of_order_events():
             for table in ("memory_edges", "memory_documents", "event_log", "user_principals", "users"):
                 db.execute(f"DELETE FROM {table} WHERE tenant_id = %s", (tenant,))
             db.execute("DELETE FROM tenants WHERE id = %s", (tenant,))
+
+
+def test_spoken_hints_pick_source_kind_and_recency():
+    from cue.memory.query import _hinted
+    assert _hinted("Cue, what was the last commit about?")[:3] == ("github", "commit.", True)
+    assert _hinted("Cue, any new emails?")[:3] == ("gmail", None, True)
+    source, kind, recent, words = _hinted("Cue, what did we change in BM25 ranking?")
+    assert (source, recent) == (None, False) and "BM25" in words and "ranking" in words

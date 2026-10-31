@@ -37,12 +37,13 @@ Open http://localhost:8000, sign up (the confirmation link is in the server log)
 key, and add a webhook secret. Attendee wants S3 for recordings even with recording off; point
 `AWS_ENDPOINT_URL` at a local MinIO if it complains.
 
-Cue's webhook must be HTTPS, so expose the API with ngrok:
+Cue's webhook must be HTTPS, so expose the API with a Cloudflare quick tunnel:
 
 ```sh
-ngrok http 8080        # Cue API port
+cloudflared tunnel --url http://localhost:8080   # free, no account; URL changes per run
+printf '%s' 'ATTENDEE_API_KEY' > .secrets/attendee-api-key.txt
 printf '%s' 'ATTENDEE_WEBHOOK_SECRET' > .secrets/attendee-webhook.txt
-# .env: CUE_PUBLIC_URL, ATTENDEE_URL, ATTENDEE_API_KEY, ATTENDEE_WEBHOOK_SECRET_VERSION
+# .env: CUE_PUBLIC_URL, ATTENDEE_URL, ATTENDEE_API_KEY_SECRET_VERSION, ATTENDEE_WEBHOOK_SECRET_VERSION
 ```
 
 ## Known limits

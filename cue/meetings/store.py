@@ -257,3 +257,34 @@ def live_meeting_by_bot(database: psycopg.Connection, tenant_id: UUID, bot_id: s
         (tenant_id, bot_id),
     ).fetchone()
     return None if row is None else get_meeting(database, tenant_id, row[0])
+
+
+def recent_meetings(database: psycopg.Connection, tenant_id: UUID, limit: int = 30) -> list[dict]:
+    rows = database.execute(
+        "SELECT s.id, s.title, s.meeting_url, s.status, s.started_at, s.ended_at, s.created_at, "
+        "(SELECT count(*) FROM meeting_transcript_segments t "
+        " WHERE t.tenant_id = s.tenant_id AND t.meeting_id = s.id), "
+        "(SELECT count(*) FROM meeting_replies r WHERE r.tenant_id = s.tenant_id AND r.meeting_id = s.id), "
+        "EXISTS (SELECT 1 FROM meeting_notes n WHERE n.tenant_id = s.tenant_id AND n.meeting_id = s.id) "
+        "FROM meeting_sessions s WHERE s.tenant_id = %s ORDER BY s.created_at DESC LIMIT %s",
+        (tenant_id, limit),
+    ).fetchall()
+    keys = ["id", "title", "meeting_url", "status", "started_at", "ended_at", "created_at",
+            "segments", "replies", "has_notes"]
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def timeline(database: psycopg.Connection, tenant_id: UUID, meeting_id: UUID) -> list[dict]:
+    """Captions and Cue's spoken replies in one order, for the live meeting view."""
+    rows = database.execute(
+        "SELECT 'speech', t.started_at, t.speaker_id, COALESCE(p.display_name, t.speaker_id), t.text "
+        "FROM meeting_transcript_segments t LEFT JOIN meeting_participants p "
+        "ON p.tenant_id = t.tenant_id AND p.meeting_id = t.meeting_id AND p.participant_id = t.speaker_id "
+        "WHERE t.tenant_id = %s AND t.meeting_id = %s "
+        "UNION ALL SELECT 'cue', r.created_at, 'cue', 'Cue', r.answer FROM meeting_replies r "
+        "WHERE r.tenant_id = %s AND r.meeting_id = %s "
+        "AND NOT (r.status = 'interrupted' AND r.chunks_sent = 0) ORDER BY 2",
+        (tenant_id, meeting_id, tenant_id, meeting_id),
+    ).fetchall()
+    keys = ["kind", "at", "speaker_id", "speaker", "text"]
+    return [dict(zip(keys, row)) for row in rows]

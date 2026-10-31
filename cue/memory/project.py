@@ -1,5 +1,6 @@
 """Idempotent Postgres graph projection and Qdrant fan-out from canonical events."""
 
+import os
 import json
 from datetime import datetime
 from uuid import UUID
@@ -108,6 +109,9 @@ def project_event(data: bytes, attributes: dict, database_url: str,
             ).fetchone()
     if not event["text"].strip() or row[0] is not None:
         return False
+    if os.getenv("CUE_VECTOR_SEARCH", "on") == "off":
+        # Keyword-only deployments run no embedding server; the document is already searchable.
+        return True
     vector = (embedder or QwenEmbedder()).embed(event["text"])
     (index or QdrantIndex()).upsert(tenant_id, event, vector)
     with psycopg.connect(database_url) as database:

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cue · Teammate Console</title>
+<style>
+  :root {
+    --bg: #0b0d12; --surface: #12151c; --surface-2: #171b23; --line: #252a35;
+    --text: #e8ebf2; --muted: #98a1b3; --accent: #6d89fb; --accent-strong: #6280f8;
+    --accent-soft: #1d2440;
+    --ok: #3fb96f; --warn: #e0a63a; --bad: #e05b5b; --idle: #6b7383;
+    --radius: 12px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.55 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+         -webkit-font-smoothing: antialiased; }
+  button, input, textarea, select { font: inherit; color: inherit; }
+
+  .shell { display: flex; min-height: 100vh; }
+  .sidebar { width: 232px; flex: 0 0 232px; background: var(--surface);
+             border-right: 1px solid var(--line); padding: 16px 12px;
+             display: flex; flex-direction: column; gap: 18px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+  .mark { width: 28px; height: 28px; border-radius: 9px; flex: 0 0 28px;
+          background: linear-gradient(135deg, var(--accent), #7a5cf0);
+          display: grid; place-items: center; font-weight: 700; font-size: 15px; color: #fff; }
+  .brand-name { font-weight: 650; letter-spacing: -.01em; }
+  .brand-sub { font-size: 11px; color: var(--muted); }
+
+  nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+              border-radius: 9px; background: none; border: 0; cursor: pointer;
+              color: var(--muted); text-align: left; width: 100%; }
+  .nav-item:hover { background: var(--surface-2); color: var(--text); }
+  .nav-item.active { background: var(--accent-soft); color: var(--text); }
+  .nav-item svg { width: 16px; height: 16px; flex: 0 0 16px; }
+  .badge { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+           background: var(--warn); color: #241a04; font-size: 11px; font-weight: 700;
+           display: none; place-items: center; }
+  .badge.show { display: grid; }
+
+  .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px;
+               padding: 10px; background: var(--surface-2); border-radius: var(--radius); }
+  .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+  .kv span { color: var(--muted); }
+  .kv b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--idle);
+         display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+  .dot.bad { background: var(--bad); }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar { display: flex; align-items: center; gap: 12px; padding: 14px 22px;
+            border-bottom: 1px solid var(--line); background: var(--surface); }
+  .topbar h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .topbar p { margin: 0; font-size: 12px; color: var(--muted); }
+  .spacer { flex: 1; }
+  .view { padding: 20px 22px 40px; max-width: 1080px; width: 100%; margin: 0 auto; }
+  .pane { display: none; } .pane.active { display: block; }
+
+  .card { background: var(--surface); border: 1px solid var(--line);
+          border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; }
+  .card > h2 { font-size: 11px; margin: 0 0 12px; text-transform: uppercase;
+               letter-spacing: .07em; color: var(--muted); font-weight: 650; }
+  .grid { display: grid; gap: 14px; }
+  .grid.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .grid.three { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .input, textarea.input, select.input { width: 100%; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; }
+  textarea.input { min-height: 76px; resize: vertical; }
+  .input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .btn { background: var(--accent-strong); color: #070c18; border: 0; border-radius: 9px;
+         padding: 9px 15px; font-weight: 650; cursor: pointer; }
+  .btn:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.ghost { background: transparent; border: 1px solid var(--line); color: var(--muted);
+               font-weight: 500; }
+  .btn.ghost:hover { color: var(--text); border-color: var(--muted); }
+  .btn.ok { background: var(--ok); color: #06210f; }
+  .btn.danger { background: transparent; border: 1px solid var(--bad); color: #ff9c9c; }
+  .btn.small { padding: 7px 11px; font-size: 12px; border-radius: 7px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .err { color: var(--bad); font-size: 12px; white-space: pre-wrap; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
+          font-weight: 650; padding: 2px 9px; border-radius: 99px; text-transform: lowercase; }
+  .pill.queued, .pill.running, .pill.dispatched { background: #1c2340; color: #8ea2ff; }
+  .pill.awaiting_approval, .pill.deferred { background: #33291a; color: var(--warn); }
+  .pill.completed, .pill.active, .pill.approved, .pill.replayed { background: #16301f; color: var(--ok); }
+  .pill.failed, .pill.cancelled, .pill.rejected, .pill.paused { background: #331a1a; color: var(--bad); }
+  .pill.skipped, .pill.idle { background: #1e222b; color: var(--muted); }
+
+  .bubble { border-radius: 12px; padding: 10px 13px; margin-bottom: 10px;
+            border: 1px solid var(--line); max-width: 78%; }
+  .bubble.me { background: var(--accent-soft); margin-left: auto; }
+  .bubble.agent { background: var(--surface-2); }
+  .bubble .meta { font-size: 11px; color: var(--muted); margin-bottom: 5px; display: flex;
+                  gap: 8px; align-items: center; }
+  .bubble .txt { white-space: pre-wrap; word-break: break-word; }
+  .cite-list { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+  .cite { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .cite a { color: var(--accent); }
+  .cite .src { font-family: var(--mono); font-size: 11px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px;
+       text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px;
+       border-bottom: 1px solid var(--line); }
+  td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  .num { font-size: 26px; font-weight: 650; letter-spacing: -.02em; }
+  .stat { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+          padding: 10px 12px; }
+  .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase;
+               letter-spacing: .06em; }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 9px;
+        padding: 10px; overflow: auto; max-height: 320px; font-size: 12px; margin: 0; }
+  .empty { color: var(--muted); font-size: 13px; padding: 14px 0; text-align: center; }
+  .divider { height: 1px; background: var(--line); margin: 12px 0; }
+  .banner { border-radius: 10px; padding: 10px 13px; font-size: 13px; margin-bottom: 14px;
+            border: 1px solid var(--line); background: var(--surface-2); }
+  .banner.warn { border-color: #4a3a18; background: #241d0d; color: #f0c874; }
+  .banner.bad { border-color: #4a1f1f; background: #251212; color: #f0a0a0; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+
+  @media (max-width: 860px) {
+    .shell { flex-direction: column; }
+    .sidebar { width: auto; flex: none; flex-direction: row; align-items: center;
+               overflow-x: auto; gap: 12px; }
+    nav { flex-direction: row; }
+    .nav-item { white-space: nowrap; min-height: 40px; }
+    .side-foot { margin-top: 0; flex-direction: row; gap: 14px; }
+    .bubble { max-width: 100%; }
+    .btn, .btn.small { min-height: 44px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark">C</div>
+      <div>
+        <div class="brand-name">Cue</div>
+        <div class="brand-sub">Teammate console</div>
+      </div>
+    </div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <div class="kv"><span>Signed in</span><b id="who">…</b></div>
+      <div class="kv"><span>Tenant</span><b id="tenantLabel">…</b></div>
+      <div class="kv"><span>Role</span><b id="roleLabel">…</b></div>
+      <div class="kv"><span>API</span><b><span class="dot" id="apiDot"></span> <span id="apiText">checking</span></b></div>
+      <div class="kv"><span>Worker</span><b><span class="dot" id="workerDot"></span> <span id="workerText">unknown</span></b></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="viewTitle">Ask Cue</h1>
+        <p id="viewSub">Send work to the agent runtime and watch it run.</p>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn ghost small" id="refreshBtn">Refresh</button>
+    </header>
+
+    <div class="view">
+      <div id="runtimeBanner"></div>
+
+      <section class="pane active" data-pane="ask">
+        <div class="card">
+          <h2>New request</h2>
+          <textarea class="input" id="askInput" placeholder="e.g. Summarize what changed in the repo today and draft a standup note."></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="btn" id="askBtn">Send to Cue</button>
+            <span class="hint">Tasks are queued for the worker (<code>python scripts/run_tasks.py</code>) and need a model gateway.</span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Conversation</h2>
+          <div id="thread"></div>
+          <div class="row"><button class="btn ghost small" id="reloadThread">Reload history</button></div>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="approvals">
+        <div class="card">
+          <h2>Awaiting your decision</h2>
+          <div id="approvalsList"></div>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="memory">
+        <div class="card">
+          <h2>Ask team memory</h2>
+          <textarea class="input" id="memInput" placeholder="e.g. What did we decide about the launch date?"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="btn" id="memBtn">Query memory</button>
+            <span class="hint">Routes across keyword, vector, graph and summary stores under the asker's ACL.</span>
+          </div>
+          <div id="memOut" style="margin-top:12px"></div>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="tasks">
+        <div class="card">
+          <h2>Recent tasks</h2>
+          <div class="row" style="margin-bottom:10px">
+            <select class="input" id="taskFilter" style="max-width:200px">
+              <option value="">All statuses</option>
+              <option value="queued">queued</option>
+              <option value="running">running</option>
+              <option value="awaiting_approval">awaiting_approval</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
+              <option value="cancelled">cancelled</option>
+            </select>
+            <button class="btn ghost small" id="tasksRefresh">Refresh</button>
+          </div>
+          <div id="tasksTable"></div>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="meetings">
+        <div class="grid two">
+          <div class="card">
+            <h2>Join a meeting</h2>
+            <div class="field"><label>Meeting URL</label>
+              <input class="input" id="mtUrl" placeholder="https://meet.google.com/xxx-yyyy-zzz"></div>
+            <div class="field"><label>Title (optional)</label>
+              <input class="input" id="mtTitle" placeholder="Weekly sync"></div>
+            <div class="field"><label>Attendee emails, one per line</label>
+              <textarea class="input" id="mtPeople" placeholder="alice@example.com"></textarea></div>
+            <button class="btn" id="mtJoin">Join with Recall bot</button>
+            <p class="hint" style="margin-top:8px">Needs <code>RECALL_API_KEY_SECRET_VERSION</code> and a reachable Recall service.</p>
+            <div id="mtOut" style="margin-top:10px"></div>
+          </div>
+          <div class="card">
+            <h2>Meeting notes</h2>
+            <div class="field"><label>Meeting ID</label>
+              <input class="input" id="ntId" placeholder="uuid from a join response"></div>
+            <div class="row">
+              <button class="btn ghost small" id="ntLoad">Load notes</button>
+              <button class="btn danger small" id="ntEnd">End meeting</button>
+            </div>
+            <div id="ntOut" style="margin-top:10px"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="proactive">
+        <div class="grid two">
+          <div class="card">
+            <h2>Create a rule</h2>
+            <div class="field"><label>Rule key</label>
+              <input class="input" id="prKey" placeholder="daily-standup"></div>
+            <div class="field"><label>Kind</label>
+              <select class="input" id="prKind">
+                <option value="daily_digest">daily_digest</option>
+                <option value="weekly_digest">weekly_digest</option>
+                <option value="reminder">reminder</option>
+                <option value="stale_pr">stale_pr</option>
+                <option value="overdue_action">overdue_action</option>
+              </select></div>
+            <div class="field"><label>Cron schedule (blank = default)</label>
+              <input class="input" id="prSchedule" placeholder="30 9 * * *"></div>
+            <div class="field"><label>Timezone</label>
+              <input class="input" id="prTz" value="UTC"></div>
+            <div class="field"><label>Run at (reminders only, ISO)</label>
+              <input class="input" id="prNext" placeholder="2026-10-30T09:00:00Z"></div>
+            <div class="field"><label>Config JSON (reminder message goes here)</label>
+              <textarea class="input" id="prConfig" placeholder='{"message": "Post the standup digest"}'></textarea></div>
+            <button class="btn" id="prCreate">Create rule</button>
+            <div id="prOut" style="margin-top:10px"></div>
+          </div>
+          <div>
+            <div class="card"><h2>Rules</h2><div id="ruleList"></div></div>
+            <div class="card"><h2>Mutes &amp; quiet hours</h2><div id="muteList"></div></div>
+            <div class="card">
+              <h2>Set quiet hours</h2>
+              <div class="row">
+                <select class="input" id="qhScope" style="max-width:110px">
+                  <option value="tenant">tenant</option><option value="user">user</option>
+                </select>
+                <input class="input" id="qhTz" value="UTC" style="max-width:130px">
+                <input class="input" type="time" id="qhStart" value="22:00" style="max-width:120px">
+                <input class="input" type="time" id="qhEnd" value="07:00" style="max-width:120px">
+                <button class="btn ghost small" id="qhSave">Save</button>
+              </div>
+            </div>
+            <div class="card"><h2>Recent runs</h2><div id="runList"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pane" data-pane="admin">
+        <div class="card"><h2>Pilot status</h2>
+          <div class="grid three" id="statusStats"></div>
+          <div id="statusExtra" class="hint" style="margin-top:10px"></div>
+        </div>
+        <div class="grid two">
+          <div class="card"><h2>Kill switches</h2>
+            <div class="row" style="margin-bottom:10px">
+              <select class="input" id="ksScope" style="max-width:120px">
+                <option value="tenant">tenant</option><option value="connector">connector</option>
+              </select>
+              <input class="input" id="ksSubject" value="*" style="max-width:150px">
+              <select class="input" id="ksMode" style="max-width:110px">
+                <option value="queue">queue</option><option value="drop">drop</option>
+              </select>
+              <button class="btn danger small" id="ksPause">Pause</button>
+              <button class="btn ok small" id="ksResume">Resume</button>
+            </div>
+            <div id="switchList"></div>
+          </div>
+          <div class="card"><h2>Tool tiers (v1 policy)</h2><div id="tierList"></div></div>
+        </div>
+        <div class="card"><h2>Access report</h2>
+          <div class="row" style="margin-bottom:10px"><button class="btn ghost small" id="arLoad">Load access report</button></div>
+          <div id="accessReport"></div>
+        </div>
+        <div class="grid two">
+          <div class="card"><h2>Audit export</h2>
+            <div class="field"><label>Since</label><input class="input" type="datetime-local" id="auSince"></div>
+            <div class="field"><label>Until</label><input class="input" type="datetime-local" id="auUntil"></div>
+            <div class="row">
+              <select class="input" id="auFormat" style="max-width:110px">
+                <option value="json">json</option><option value="csv">csv</option>
+              </select>
+              <button class="btn ghost small" id="auLoad">Export</button>
+            </div>
+            <div id="auditOut" style="margin-top:10px"></div>
+          </div>
+          <div class="card"><h2>Danger zone</h2>
+            <div class="field"><label>Revoke subject (firebase uid, or connector id)</label>
+              <input class="input" id="rvSubject" placeholder="dev-local-user"></div>
+            <div class="field"><label>Reason</label><input class="input" id="rvReason" placeholder="Left the team"></div>
+            <div class="row">
+              <select class="input" id="rvKind" style="max-width:130px">
+                <option value="user">user</option><option value="connector">connector</option>
+              </select>
+              <button class="btn danger small" id="rvRun">Revoke access</button>
+            </div>
+            <div class="divider"></div>
+            <div class="field"><label>Delete an event by id (propagates to every store)</label>
+              <input class="input" id="evId" placeholder="gh:delivery:..."></div>
+            <button class="btn danger small" id="evDelete">Delete event</button>
+            <div id="dangerOut" style="margin-top:10px"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/classic.js"></script>
+</body>
+</html>

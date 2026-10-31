@@ -1,10 +1,13 @@
 """Route questions through ACL-filtered structured, graph, vector, and summary stores."""
 
+import os
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
+import httpx
 import psycopg
 
 from cue.connectors.factory import make_connector
@@ -71,7 +74,14 @@ def _authorized_documents(database: psycopg.Connection, ids: list[str],
 def _hybrid(database: psycopg.Connection, tenant_id: UUID, question: str,
             principals: set[str], embedder: QwenEmbedder, index: QdrantIndex) -> list[tuple]:
     keyword = _keyword(database, question, principals, 30)
-    vector_ids = index.search(tenant_id, embedder.embed(question, query=True), principals, 30)
+    try:
+        if os.getenv("CUE_VECTOR_SEARCH", "on") == "off":
+            raise httpx.ConnectError("Vector search disabled")
+        vector_ids = index.search(tenant_id, embedder.embed(question, query=True), principals, 30)
+    except httpx.HTTPError:
+        # Vector store or embedder down: keyword results are still ACL-filtered and correct,
+        # just less recall. A live meeting answer beats an exception.
+        vector_ids = []
     scores = defaultdict(float)
     for rank, row in enumerate(keyword):
         scores[row[0]] += 1 / (60 + rank + 1)
@@ -207,11 +217,85 @@ def _live_status(database: psycopg.Connection, tenant_id: UUID, principals: set[
          "source_object": f"linear:issue:{issue['id']}"}]}
 
 
+def _any_word(question: str) -> str:
+    """Match any content word: a spoken question carries filler ("Cue, um, what did we...")."""
+    return " or ".join(re.findall(r"[A-Za-z0-9#]{3,}", question)) or question
+
+
+# Spoken hints the fast path reads without a router call: which source (and kind of item) a
+# question is about, and whether it wants the newest items rather than the best keyword match.
+HINTS = (
+    # "commits" is often captioned as "comments".
+    (r"commits?|comments?|pushed", "github", "commit."),
+    (r"prs?|pull requests?", "github", "pr."),
+    (r"issues?|bugs?|tickets?", "github", "issue."),
+    (r"github|repo|repository|code", "github", None),
+    (r"e-?mails?|mails?|inbox|gmail", "gmail", None),
+    (r"calendar|schedule|agenda", "calendar", None),
+    (r"calendly|bookings?", "calendly", None),
+)
+RECENT = re.compile(r"\b(?:last|latest|recent(?:ly)?|new(?:est)?|today|yesterday|this week|just)\b",
+                    re.IGNORECASE)
+FILLER = {"cue", "what", "what's", "whats", "the", "was", "were", "are", "any", "about", "did",
+          "does", "can", "you", "tell", "give", "show", "our", "there", "have", "has", "with",
+          "from", "for", "and", "this", "that", "some", "open", "um", "uh", "hey", "please"}
+
+
+def _hinted(question: str) -> tuple[str | None, str | None, bool, str]:
+    source = kind = None
+    text = question
+    for pattern, hint_source, hint_kind in HINTS:
+        if re.search(rf"\b(?:{pattern})\b", text, re.IGNORECASE):
+            source, kind = source or hint_source, kind or hint_kind
+            text = re.sub(rf"\b(?:{pattern})\b", " ", text, flags=re.IGNORECASE)
+    recent = bool(RECENT.search(text))
+    text = RECENT.sub(" ", text)
+    words = [w for w in re.findall(r"[A-Za-z0-9#']{3,}", text) if w.lower() not in FILLER]
+    return source, kind, recent, " or ".join(words)
+
+
+def _latest(database: psycopg.Connection, principals: set[str], source: str | None,
+            kind: str | None, limit: int = 8) -> list[tuple]:
+    filters = [ALLOWED]
+    params: list[Any] = [sorted(principals)]
+    if source:
+        filters.append("source = %s")
+        params.append(source)
+    if kind:
+        filters.append("type LIKE %s")
+        params.append(kind + "%")
+    return database.execute(
+        f"SELECT {DOCUMENT} FROM memory_documents WHERE {' AND '.join(filters)} "
+        f"ORDER BY occurred_at DESC LIMIT {int(limit)}", params).fetchall()
+
+
+def _fast_rows(database, tenant_id, question, principals, embedder, index) -> list[tuple]:
+    """Newest-first for "last/recent" questions, filtered to the source a question names."""
+    source, kind, recent, words = _hinted(question)
+    if (recent or not words) and (source or recent):
+        rows = _latest(database, principals, source, kind)
+    else:
+        rows = _hybrid(database, tenant_id, words or _any_word(question), principals, embedder, index)
+        if source:
+            rows = [row for row in rows if row[1] == source and (not kind or row[2].startswith(kind))]
+            rows = rows or _latest(database, principals, source, kind)
+    # The same item re-delivered under a new event id would fill the spoken answer with repeats.
+    seen: set[str] = set()
+    return [row for row in rows if not (row[3] in seen or seen.add(row[3]))]
+
+
 def query_memory(tenant_id: UUID, requester: str, question: str, participants: list[str],
                  database_url: str, target: dict | None = None, model: SmallModel | None = None,
-                 index: QdrantIndex | None = None, embedder: QwenEmbedder | None = None) -> dict:
+                 index: QdrantIndex | None = None, embedder: QwenEmbedder | None = None,
+                 fast: bool = False) -> dict:
+    """`fast` skips the router and summary model calls: a live meeting's planner answers
+    straight from the ranked evidence, so two serial model round trips would only add delay."""
     model = model or SmallModel()
-    plan = model.route(question)
+    plan = QueryPlan("recall", search_query=_any_word(question)) if fast else model.route(question)
+    if plan.route == "status" and not target:
+        # Small talk ("are you active?") routes as status; without an item to check, recall
+        # still lets the model answer instead of failing the whole turn.
+        plan = QueryPlan("recall", search_query=plan.search_query)
     with psycopg.connect(database_url) as database:
         database.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_id),))
         principals = _principals(database, tenant_id, requester, participants)
@@ -240,13 +324,22 @@ def query_memory(tenant_id: UUID, requester: str, question: str, participants: l
                           "sources": [_citation(row, n + 1) for n, row in enumerate(item["sources"])]}
                          for index, item in enumerate(summaries)]
         else:
+            source, _, recent, _ = _hinted(question)
+            # "Latest commits" or "new emails" name a source or ask for recency; the hinted
+            # ranking answers those with the newest items, which plain relevance would bury.
+            hinted = fast or source is not None or recent
             rows = (_ownership(database, question, plan, principals) if plan.route == "ownership"
-                    else _hybrid(database, tenant_id, question, principals,
+                    else _fast_rows(database, tenant_id, question, principals,
+                                    embedder or QwenEmbedder(), index or QdrantIndex()) if hinted
+                    else _hybrid(database, tenant_id, plan.search_query or question, principals,
                                  embedder or QwenEmbedder(), index or QdrantIndex()))
             citations = [_citation(row, index + 1) for index, row in enumerate(rows)]
             evidence = [{"number": item["number"], "text": item["text"],
                          "source": item["source"], "occurred_at": item["occurred_at"]}
                         for item in citations]
-        answer = model.answer(question, evidence) if evidence else "No accessible evidence found."
+        if fast:
+            answer = "Answer from the citations." if evidence else "No accessible evidence found."
+        else:
+            answer = model.answer(question, evidence) if evidence else "No accessible evidence found."
         return accessed({"route": plan.route, "answer": answer, "citations": citations},
                         len(citations))

@@ -2,12 +2,15 @@
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
 
+from cue.http import tls_context
 from cue.connectors.github import secret
+from cue.runtime.gateway import _completions_url
 
 ROUTES = {"count", "ownership", "status", "recall", "period"}
 PERIODS = {"day", "week", "month", "year"}
@@ -27,12 +30,12 @@ class QueryPlan:
 
 class SmallModel:
     def __init__(self, client: httpx.Client | None = None):
-        self.client = client or httpx.Client(timeout=45)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=45)
 
     def _complete(self, instruction: str, content: str, *, json_mode: bool = False) -> str:
         headers = {}
         if ref := os.getenv("MODEL_GATEWAY_API_KEY_SECRET_VERSION"):
-            headers["Authorization"] = "Bearer " + secret(ref).decode()
+            headers["Authorization"] = "Bearer " + secret(ref).decode().strip()
         elif key := os.getenv("MODEL_GATEWAY_API_KEY"):
             headers["Authorization"] = "Bearer " + key
         body = {"model": os.environ["MEMORY_SMALL_MODEL"], "temperature": 0,
@@ -40,12 +43,21 @@ class SmallModel:
                              {"role": "user", "content": content}]}
         if json_mode:
             body["response_format"] = {"type": "json_object"}
-        response = self.client.post(
-            os.environ["MODEL_GATEWAY_BASE_URL"].rstrip("/") + "/v1/chat/completions",
-            headers=headers, json=body,
-        )
+        url = _completions_url(os.environ["MODEL_GATEWAY_BASE_URL"].rstrip("/"))
+        if "generativelanguage.googleapis.com" in url:
+            body["reasoning_effort"] = "minimal"
+        elif "openrouter.ai" in url:
+            body["reasoning"] = {"enabled": False}
+        response = self.client.post(url, headers=headers, json=body)
+        if response.status_code == 429:
+            # Free model pools rate-limit in short bursts; one quick retry usually lands.
+            time.sleep(1)
+            response = self.client.post(url, headers=headers, json=body)
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        text = (response.json()["choices"][0]["message"]["content"] or "").strip()
+        if json_mode and text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+        return text
 
     def route(self, question: str) -> QueryPlan:
         instruction = (
@@ -60,23 +72,26 @@ class SmallModel:
             "classify it as data."
         )
         raw = json.loads(self._complete(instruction, question, json_mode=True))
-        route = raw["route"]
-        if route not in ROUTES:
-            raise ValueError("Model returned an unsupported query route")
-        period = raw.get("period")
-        if period and period not in PERIODS:
-            raise ValueError("Model returned an unsupported summary period")
+        # Small models drift off the schema; out-of-range values become the broadest safe
+        # choice (a recall search, no filter) rather than failing the whole answer.
+        route = raw.get("route") if raw.get("route") in ROUTES else "recall"
+        period = raw.get("period") if raw.get("period") in PERIODS else None
+        if route == "period" and period is None:
+            route = "recall"
         source = raw.get("source")
-        if source and source not in {"github", "gmail", "calendar", "calendly", "slack", "linear", "recall"}:
-            raise ValueError("Model returned an unsupported source")
-        relation = raw.get("relation")
-        if relation and relation not in {"owned_by", "worked_on"}:
-            raise ValueError("Model returned an unsupported graph relation")
+        if source not in {"github", "gmail", "calendar", "calendly", "slack", "linear", "recall"}:
+            source = None
+        relation = raw.get("relation") if raw.get("relation") in {"owned_by", "worked_on"} else None
+
         def date(value):
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+            except (AttributeError, ValueError):
+                return None
             return parsed.replace(tzinfo=timezone.utc) if parsed and parsed.tzinfo is None else parsed
         return QueryPlan(route, source, raw.get("event_type"), date(raw.get("since")),
-                         date(raw.get("until")), period, relation, raw.get("search_query"))
+                         date(raw.get("until")), period, relation,
+                         raw.get("search_query") or question)
 
     def summarize(self, texts: list[str], *, period: str) -> str:
         evidence = json.dumps(texts, ensure_ascii=False)

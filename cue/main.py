@@ -1,5 +1,7 @@
 import os
+import threading
 import json
+import logging
 import hashlib
 import hmac
 from datetime import datetime, time
@@ -32,6 +34,7 @@ from cue.lifecycle import propagation
 from cue.meetings import attendee, bolna
 from cue.meetings import notes as meeting_notes
 from cue.meetings import service as meeting_service
+from cue.meetings import store as meeting_store
 from cue.memory.query import query_memory
 from cue.ops import status as ops_status
 from cue.proactive import quiet, rules as proactive_rules
@@ -42,6 +45,12 @@ from cue.runtime import tools as agent_tools
 from cue.runtime.gateway import LiteLLMGateway
 
 app = FastAPI(title="Cue API")
+
+
+@app.on_event("startup")
+def _warm_voice() -> None:
+    # Off the request path: the first meeting answer would otherwise pay ~2 s for a cold voice.
+    threading.Thread(target=attendee.warm_tts, daemon=True).start()
 bearer = HTTPBearer(auto_error=False)
 
 if os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
@@ -90,27 +99,23 @@ def readyz() -> dict:
     return {"status": status, "checks": checks}
 
 
-CONSOLE_HTML = Path(__file__).parent / "static" / "console.html"
-CONSOLE_JS = Path(__file__).parent / "static" / "console.js"
-
-
 def console_enabled() -> bool:
     # Local development only: the console relies on the dev auth bypass, so it is
     # never served when that bypass is off.
     return bool(os.getenv("CUE_DEV_AUTH_UID"))
 
 
-@app.get("/ui", include_in_schema=False)
-def dev_console() -> HTMLResponse:
-    """The teammate console. Available only while the dev auth bypass is on."""
+STATIC = Path(__file__).parent / "static"
+MASCOT_POSES = {"hero", "idle", "thinking", "talking", "acting", "approval", "wordmark"}
+
+
+def _console_page(name: str) -> HTMLResponse:
     if not console_enabled():
         raise HTTPException(status_code=404)
-    html = CONSOLE_HTML.read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return HTMLResponse((STATIC / name).read_text(encoding="utf-8"))
 
 
-@app.get("/ui/console.js", include_in_schema=False)
-def dev_console_script() -> Response:
+def _console_script(name: str) -> Response:
     if not console_enabled():
         raise HTTPException(status_code=404)
     # The page and this script are same-origin, so no CORS is needed for either.
@@ -120,9 +125,39 @@ def dev_console_script() -> Response:
         f"window.__CUE_GATEWAY_URL__={json.dumps(os.getenv('MODEL_GATEWAY_BASE_URL', ''))};\n"
         # Only whether a key exists is exposed; the key itself never leaves the server.
         f"window.__CUE_GATEWAY_KEY__={json.dumps(bool(os.getenv('MODEL_GATEWAY_API_KEY')))};\n"
-        + CONSOLE_JS.read_text(encoding="utf-8")
+        + (STATIC / name).read_text(encoding="utf-8")
     )
     return Response(body, media_type="application/javascript")
+
+
+@app.get("/ui", include_in_schema=False)
+def dev_console() -> HTMLResponse:
+    """The teammate console. Available only while the dev auth bypass is on."""
+    return _console_page("console.html")
+
+
+@app.get("/ui/console.js", include_in_schema=False)
+def dev_console_script() -> Response:
+    return _console_script("console.js")
+
+
+@app.get("/ui/classic", include_in_schema=False)
+def dev_console_classic() -> HTMLResponse:
+    """The earlier operator console: tasks, proactive rules, kill switches and audit."""
+    return _console_page("console-classic.html")
+
+
+@app.get("/ui/classic.js", include_in_schema=False)
+def dev_console_classic_script() -> Response:
+    return _console_script("console-classic.js")
+
+
+@app.get("/ui/mascot/{pose}.png", include_in_schema=False)
+def dev_console_mascot(pose: str) -> Response:
+    if not console_enabled() or pose not in MASCOT_POSES:
+        raise HTTPException(status_code=404)
+    return Response((STATIC / "mascot" / f"{pose}.png").read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "max-age=86400"})
 
 
 @app.post("/webhooks/github", status_code=202)
@@ -539,6 +574,25 @@ async def bolna_chat(request: Request):
     return await run_in_threadpool(lambda: bolna.completion(list(pieces), model))
 
 
+@app.get("/v1/tenants/{tenant_id}/meetings")
+def meetings_list(tenant_id: UUID, uid: str = Depends(firebase_uid)) -> dict:
+    with meeting_store.tenant_connection(tenant_id) as database:
+        if meeting_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        return {"meetings": meeting_store.recent_meetings(database, tenant_id)}
+
+
+@app.get("/v1/tenants/{tenant_id}/meetings/{meeting_id}/timeline")
+def meeting_timeline(tenant_id: UUID, meeting_id: UUID, uid: str = Depends(firebase_uid)) -> dict:
+    with meeting_store.tenant_connection(tenant_id) as database:
+        if meeting_store.membership(database, tenant_id, uid) is None:
+            raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        meeting = meeting_store.get_meeting(database, tenant_id, meeting_id)
+        if meeting is None:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+        return {"meeting": meeting, "entries": meeting_store.timeline(database, tenant_id, meeting_id)}
+
+
 @app.get("/v1/tenants/{tenant_id}/meetings/{meeting_id}/notes")
 def meeting_notes_view(tenant_id: UUID, meeting_id: UUID,
                        uid: str = Depends(firebase_uid)) -> dict:
@@ -551,6 +605,19 @@ def meeting_notes_view(tenant_id: UUID, meeting_id: UUID,
     return note
 
 
+def _leave_call(tenant_id: UUID, meeting_id: UUID) -> None:
+    """Take the Attendee bot out of the call; ending must still work if it already left."""
+    with meeting_store.tenant_connection(tenant_id) as database:
+        meeting = meeting_store.get_meeting(database, tenant_id, meeting_id)
+    bot_id = (meeting or {}).get("bot_id") or ""
+    if not bot_id.startswith(attendee.BOT_PREFIX):
+        return
+    try:
+        attendee.attendee_bot(tenant_id).leave(bot_id)
+    except Exception:  # The bot may be gone, never admitted, or Attendee may be down.
+        logging.getLogger(__name__).warning("Could not remove %s from its call", bot_id)
+
+
 @app.post("/v1/tenants/{tenant_id}/meetings/{meeting_id}/end")
 async def meeting_end(tenant_id: UUID, meeting_id: UUID,
                       uid: str = Depends(firebase_uid)) -> dict:
@@ -558,6 +625,7 @@ async def meeting_end(tenant_id: UUID, meeting_id: UUID,
         with agent_store.tenant_connection(tenant_id) as database:
             if agent_store.membership(database, tenant_id, uid) is None:
                 raise PermissionError("Not a member of this tenant")
+        await run_in_threadpool(_leave_call, tenant_id, meeting_id)
         return await run_in_threadpool(
             meeting_service.end_meeting, tenant_id, meeting_id,
             notes_model=meeting_notes.GatewayNotesModel(LiteLLMGateway()),

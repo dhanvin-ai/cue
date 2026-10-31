@@ -1,6 +1,7 @@
 """Meeting lifecycle: join through Recall, live turns, streamed replies, and notes."""
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -79,7 +80,7 @@ def join_meeting(tenant_id, uid: str, meeting_url: str, attendees: list,
     chosen = bot or recall_bot()
     bot_id = chosen.join(meeting_url, [item["email"] for item in people if item.get("email")])
     say = getattr(chosen, "say", None)
-    if say is not None:
+    if say is not None and not getattr(chosen, "disclose_on_admit", False):
         say(bot_id, DISCLOSURE)
     with store.tenant_connection(tenant_id, database_url) as database:
         store.mark_joined(database, tenant_id, meeting_id, str(bot_id), moment)
@@ -106,10 +107,53 @@ def ingest_segment(tenant_id, meeting_id, segment: TranscriptSegment,
     return position
 
 
+# Greetings and presence checks addressed to Cue, filler allowed.
+SMALL_TALK = re.compile(
+    r"(?i)(?:hey |hi |ok |okay |so )?cue[,.!]?\s*(?:um,? |uh,? )?"
+    r"(?:hi|hello|hey|thanks|thank you|are you (?:there|here|alive|listening)|can you hear me"
+    r"|you there|how are you)[?.!]*"
+    r"|(?i:(?:hi|hello|hey|thanks|thank you|good morning),? cue[?.!]*)")
+
+
+RECENT_LINES = 12
+EVIDENCE_ROWS = 6
+EVIDENCE_CHARS = 240
+
+
+# Words a speech recognizer mishears in this team's meetings; the planner maps sound-alikes
+# back to these. Repo names and attendees are added per meeting.
+VOCABULARY = ("Cue", "commit", "commits", "pull request", "PR", "issue", "repo", "branch",
+              "merge", "deploy", "release", "GitHub", "Gmail", "calendar", "Calendly")
+
+
+def vocabulary(names: list[str]) -> list[str]:
+    repo = os.getenv("CUE_DEFAULT_REPO", "")
+    extra = [repo, repo.rsplit("/", 1)[-1]] if repo else []
+    return list(dict.fromkeys([*VOCABULARY, *extra, *(n for n in names if n)]))
+
+
+def spoken_context(found: dict, conversation: list[dict], words: list[str] | None = None) -> dict:
+    """What the meeting planner reads: every token here is latency before Cue can speak.
+
+    Citations carry storage refs, URLs and object IDs the model never needs to answer aloud;
+    the conversation lets it resolve "summarize that" or a follow-up without a search.
+    """
+    return {
+        "vocabulary": words or [],
+        "conversation": conversation,
+        "evidence": [
+            {"n": item["number"], "source": item.get("source"), "type": item.get("type"),
+             "when": str(item.get("occurred_at") or "")[:10],
+             "text": " ".join(str(item.get("text") or "").split())[:EVIDENCE_CHARS]}
+            for item in found.get("citations", [])[:EVIDENCE_ROWS] if "text" in item
+        ],
+    }
+
+
 def handle_turn(tenant_id, meeting_id, turn: Turn, *, check: addressing_module.Addressing,
                 gateway, registry, tts, playback, interrupted=None, memory=None,
                 database_url: str | None = None, now: datetime | None = None,
-                pause_ms: int | None = None) -> dict | None:
+                pause_ms: int | None = None, on_text=None) -> dict | None:
     moment = now or datetime.now(timezone.utc)
     with store.tenant_connection(tenant_id, database_url) as database:
         meeting = store.get_meeting(database, tenant_id, meeting_id)
@@ -123,6 +167,10 @@ def handle_turn(tenant_id, meeting_id, turn: Turn, *, check: addressing_module.A
         uid = speakers.speaker_uid(database, tenant_id, meeting_id, turn.speaker_id)
         requester = uid or meeting["owner_uid"]
         participant_uids = speakers.participant_uids(database, tenant_id, meeting_id)
+        timeline = store.timeline(database, tenant_id, meeting_id)
+        conversation = [{"who": entry["speaker"], "said": entry["text"]}
+                        for entry in timeline[-RECENT_LINES:]]
+        words = vocabulary(sorted({entry["speaker"] for entry in timeline if entry["kind"] == "speech"}))
     request = agent_ingress.RuntimeRequest(
         tenant_id=tenant_id, source="meeting", requester_uid=requester,
         text=turn.text, idempotency_key=f"meeting:{meeting_id}:turn:{turn.started_at.isoformat()}",
@@ -134,18 +182,24 @@ def handle_turn(tenant_id, meeting_id, turn: Turn, *, check: addressing_module.A
     def meeting_memory(tenant, requester_uid, question, participants):
         if memory is not None:
             return memory(tenant, requester_uid, question, participants)
-        return context_builder.build_context(
-            tenant, requester_uid, question, participant_uids, database_url=database_url)
+        if SMALL_TALK.fullmatch(question.strip()):
+            # "Cue, are you there?" has nothing to look up; skip the search round trip.
+            return spoken_context({}, conversation, words)
+        return spoken_context(context_builder.build_context(
+            tenant, requester_uid, question, participant_uids, database_url=database_url,
+            fast=True), conversation, words)
 
     result = agent_service.run_task(
         tenant_id, task_id, gateway=gateway, registry=registry,
-        database_url=database_url, memory=meeting_memory,
+        database_url=database_url, memory=meeting_memory, on_text=on_text,
     )
     answer = result.get("answer")
     if not answer:
         answer = ("I need approval before I can do that."
                   if result["status"] == "awaiting_approval"
                   else "I couldn't complete that request.")
+    # Citation markers belong in written notes; read aloud they sound like "bracket one".
+    answer = re.sub(r"\s*\[\d+(?:,\s*\d+)*\]", "", answer).strip()
     with store.tenant_connection(tenant_id, database_url) as database:
         reply_id = store.record_reply(
             database, tenant_id, meeting_id, task_id=task_id, speaker_id=turn.speaker_id,
@@ -226,7 +280,10 @@ def end_meeting(tenant_id, meeting_id, *, notes_model: notes.NotesModel,
             segment_index=row["segment_index"],
         ) for row in rows]
         matched = turns.detect_turns(segments)
-        draft: MeetingNotesDraft = notes_model.notes(meeting, matched)
+        # A call nobody spoke in (or Cue was never admitted to) still has to end; there is
+        # nothing to summarize, so the model is not asked to.
+        draft: MeetingNotesDraft = (notes_model.notes(meeting, matched) if matched else
+                                    MeetingNotesDraft("Nothing was said while Cue was in this call."))
         existing = database.execute(
             "SELECT id FROM meeting_notes WHERE tenant_id = %s AND meeting_id = %s",
             (tenant_id, meeting_id),

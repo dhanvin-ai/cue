@@ -4,6 +4,7 @@ from uuid import UUID
 
 import httpx
 
+from cue.http import tls_context
 from cue.connectors.base import AccessControl, CanonicalEvent, Tool
 from cue.connectors.credentials import Credential
 from cue.connectors.normalize_v1 import normalize
@@ -15,7 +16,7 @@ class LinearConnector:
 
     def __init__(self, credential: Credential, client: httpx.Client | None = None):
         self.credential = credential
-        self.client = client or httpx.Client(timeout=20)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=20)
 
     def _query(self, query: str, variables: dict | None = None) -> dict:
         response = self.client.post(

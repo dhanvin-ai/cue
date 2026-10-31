@@ -4,6 +4,8 @@ import json
 import time
 
 import httpx
+
+from cue.http import tls_context
 from cue.connectors import secret_store
 
 
@@ -13,7 +15,7 @@ class Credential:
             raise ValueError("Connector secret_ref must point to /versions/latest")
         self.ref = ref
         self.provider = provider
-        self.client = client or httpx.Client(timeout=15)
+        self.client = client or httpx.Client(verify=tls_context(), timeout=15)
         self.store = store or secret_store.store_for(ref)
 
     def token(self) -> str:
